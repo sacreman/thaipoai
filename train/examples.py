@@ -69,11 +69,39 @@ def qwen_messages(source, target_lang, context=()):
     ]
 
 
+REFERENCE_ONLY = "Earlier messages in this chat, for reference only. Never translate them:\n"
+
+
+CHAT_SYSTEM = (
+    "You translate chat messages between English and Thai. Translate the meaning, not word for word: "
+    "idioms, slang and sarcasm must keep their intended meaning in the target language, and match the "
+    "sender's tone. If something is truly ambiguous, keep the ambiguity and never invent facts. "
+    "Output only the translation."
+)
+
+
+def chat_messages(source, target_lang, context=()):
+    """The prompt Gemma 4 E4B was tested with. It must match the `chat` format in cmd/suite."""
+    system = CHAT_SYSTEM
+    if context:
+        system += "\n\n" + REFERENCE_ONLY + "\n".join(context)
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"Translate into {target_lang}:\n\n{source}"},
+    ]
+
+
 def lumen_messages(source, target_lang, context=()):
-    """Lumen's documented prompt. Chat history is untested, so it goes in the guidelines."""
-    guidelines = "Use this conversation only as context and do not translate it:\n" + "\n".join(context) if context else ""
-    content = f"Please translate the following text into {target_lang}.\n#guidelines\n{guidelines}\n#src_text\n{source}"
-    return [{"role": "user", "content": content}]
+    """Lumen's documented prompt, with history in a system message.
+
+    Step 2 showed that history anywhere in the user turn gets translated. This must match
+    the `system` format in cmd/suite, which is what the model is benchmarked on.
+    """
+    content = f"Please translate the following text into {target_lang}.\n#guidelines\n\n#src_text\n{source}"
+    messages = [{"role": "user", "content": content}]
+    if context:
+        messages.insert(0, {"role": "system", "content": REFERENCE_ONLY + "\n".join(context)})
+    return messages
 
 
 def build_example(tokenizer, messages, target, stop_id, max_len=512, template_kwargs=None):

@@ -16,3 +16,4 @@ models/
 *.pem
 .claude/
 .DS_Store
+reports/Translation models to build on.md

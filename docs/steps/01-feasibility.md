@@ -95,7 +95,25 @@ rank, same 40-layer coverage, batch 4.
   would use. MLX adapters are not PEFT adapters, so a conversion step would be needed for
   vLLM. Thai-to-English quality and chat context are also untested for Lumen.
 
-## Decision
+## Gemma 4 E4B
+
+Added after step 2 chose it as the base, and tested the same way on an idle machine.
+
+| | Gemma 4 E4B |
+|---|---|
+| Weights on disk | 16 GB |
+| Parameters | 7.98B |
+| Trainable (adapter only) | 36.3M |
+| Speed, batch 4 | 195 tokens/s |
+| Average row | 195 tokens |
+| Rows per hour | 3,607 |
+| 20,000 rows | about 5.5 hours |
+| Peak GPU driver memory (between steps) | 16.4 GB |
+| Marker on 20 unseen rows, untuned | 0% |
+| Marker on 20 unseen rows, adapter | 100% |
+| Adapter checksum matched in a fresh process | Yes |
+
+## Decision, before step 2
 
 Hy-MT2 7B and Qingqiu-MT-9B both fit a night's training, and both are Apache-2.0. Lumen also
 trains overnight at 8-bit, with an extra conversion step before serving. Step 2 decides

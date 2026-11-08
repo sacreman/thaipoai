@@ -3,6 +3,7 @@ import pytest
 from train.examples import (
     IGNORE,
     build_example,
+    chat_messages,
     collate,
     gemma_messages,
     hy_messages,
@@ -63,12 +64,23 @@ def test_qwen_context_goes_in_the_instruction_not_the_text():
     assert "English text into Thai" in content
 
 
-def test_lumen_keeps_context_out_of_the_source_block():
-    content = lumen_messages("hello", "Thai", ["turn one"])[0]["content"]
-    guidelines, source = content.split("#src_text\n")
-    assert "turn one" in guidelines
-    assert source == "hello"
-    assert lumen_messages("hello", "Thai")[0]["content"].endswith("#guidelines\n\n#src_text\nhello")
+def test_chat_format_keeps_history_out_of_the_user_turn():
+    system, user = chat_messages("hello", "Thai", ["turn one"])
+    assert system["role"] == "system" and system["content"].endswith("Never translate them:\nturn one")
+    assert user["content"] == "Translate into Thai:\n\nhello"
+    assert "Earlier messages" not in chat_messages("hello", "Thai")[0]["content"]
+
+
+def test_lumen_keeps_history_in_a_system_message():
+    system, user = lumen_messages("hello", "Thai", ["turn one"])
+    assert system["role"] == "system" and system["content"].endswith("turn one")
+    assert "turn one" not in user["content"] and user["content"].endswith("#src_text\nhello")
+
+
+def test_lumen_without_history_is_one_plain_message():
+    messages = lumen_messages("hello", "Thai")
+    assert len(messages) == 1
+    assert messages[0]["content"].endswith("#guidelines\n\n#src_text\nhello")
 
 
 def test_template_options_reach_the_template():

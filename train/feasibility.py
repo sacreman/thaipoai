@@ -19,7 +19,7 @@ import torch
 from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
 
-from train.examples import build_example, collate, gemma_messages, hy_messages, qwen_messages
+from train.examples import build_example, chat_messages, collate, gemma_messages, hy_messages, qwen_messages
 from train.synthetic import MARKER, TRAIN_NUMBERS, UNSEEN_NUMBERS, rows
 
 DEVICE = "mps"
@@ -38,6 +38,7 @@ class Profile:
     stop_token: str | None  # None means the tokenizer's own eos token
     needs_token_types: bool = False
     template_kwargs: dict = field(default_factory=dict)
+    repetition_penalty: float = 1.0
 
 
 PROFILES = {
@@ -51,6 +52,57 @@ PROFILES = {
         lora_targets=r".*(self_attn\.(q|k|v|o)_proj|linear_attn\.(in_proj_qkv|in_proj_z|out_proj))",
         stop_token="<|im_end|>",
         template_kwargs={"enable_thinking": False},
+        repetition_penalty=1.05,
+    ),
+    "gemma4e4b": Profile(
+        name="gemma4e4b",
+        model="google/gemma-4-E4B-it",
+        revision="4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+        auto_class=AutoModelForImageTextToText,
+        messages=chat_messages,
+        # Only the text decoder is trained. The vision and audio towers stay frozen.
+        lora_targets=r".*language_model.*self_attn\.(q|k|v|o)_proj",
+        stop_token="<turn|>",
+    ),
+    "gemma412b": Profile(
+        name="gemma412b",
+        model="google/gemma-4-12B-it",
+        revision="43c9d014b231474fa7212dbb48a762566c2b255d",
+        auto_class=AutoModelForImageTextToText,
+        messages=hy_messages,  # the screen sends its own prompts, so this is unused
+        lora_targets=[],
+        stop_token=None,
+    ),
+    "chinda4b": Profile(
+        name="chinda4b",
+        model="iapp/ChindaMT-4B",
+        revision="8c1a44cd82e595c027326c121a0548d94169d944",
+        auto_class=AutoModelForCausalLM,
+        messages=hy_messages,  # the screen sends its own prompts, so this is unused
+        lora_targets=[],
+        stop_token="<|im_end|>",
+        template_kwargs={"enable_thinking": False},
+        repetition_penalty=1.05,
+    ),
+    "mango9b": Profile(
+        name="mango9b",
+        model="MGTV-AI/Mango-MT-9B",
+        revision="a3f5a98b41f697799c707994bb496e37c50b2377",
+        auto_class=AutoModelForCausalLM,
+        messages=hy_messages,  # the screen sends its own prompts, so this is unused
+        lora_targets=[],
+        stop_token="<|im_end|>",
+        template_kwargs={"enable_thinking": False},
+    ),
+    "index9b": Profile(
+        name="index9b",
+        model="IndexTeam/Index-Translate-9B",
+        revision="4e06279e62352dab96bbeb6fa0579bca5e822d75",
+        auto_class=AutoModelForCausalLM,
+        messages=hy_messages,  # the screen sends its own prompts, so this is unused
+        lora_targets=[],
+        stop_token="<|im_end|>",
+        template_kwargs={"enable_thinking": False},
     ),
     "hy7b": Profile(
         name="hy7b",
@@ -60,6 +112,7 @@ PROFILES = {
         messages=hy_messages,
         lora_targets=["q_proj", "k_proj", "v_proj", "o_proj"],
         stop_token=None,
+        repetition_penalty=1.05,
     ),
     "gemma12b": Profile(
         name="gemma12b",

@@ -15,7 +15,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "anthropic>=2.6.0",
+    "pytest",
+]
 mac = [
     "mlx>=0.32.4",
     "mlx-lm>=0.32.2",

@@ -1,6 +1,6 @@
 # ThaiPoAI: replacing hosted translation with a model we run ourselves
 
-Version 6.0, 8 November 2026. Personal open-source project by Steven Acreman.
+Version 7.0, 8 November 2026. Personal open-source project by Steven Acreman.
 Public repository `sacreman/thaipoai`, model `sacreman/thaipoai` on Hugging Face,
 Apache-2.0 for code and weights.
 
@@ -49,7 +49,7 @@ The score is about meaning.
 **If a benchmark misses the margin:** train again, with a fresh held-out window, until it
 passes or the budget is spent. Only then report whatever the final result is.
 
-Fine-tuned means fine-tuned. The base model is Lumen, from Alibaba Token Hub, and the README says so.
+Fine-tuned means fine-tuned. The base model is Gemma 4 E4B, from Google, and the README says so.
 
 ---
 
@@ -62,7 +62,7 @@ ThaiPo Kappa log (raw events + delivered translations, checksummed per chat-day)
 dataset-projector (Go): filters, PII scrub, lineage manifest
         |  + relabelled rows + free public data
         v
-LoRA training: 8-bit Lumen on the Mac for rehearsal, 16-bit on a temporary GKE A100 (section 7.1)
+LoRA training: the same script on the Mac for rehearsal, then a temporary GKE GPU for real runs (section 7.1)
         |
         v
 Adapter with sha256 manifest  ->  leak test  ->  frozen-candidate benchmark
@@ -74,9 +74,7 @@ AdapterRollout CR  ->  rollout-controller (Go)
 Client -> gateway (Go, guards) -> vLLM on GKE (Mac model server under kind) with adapter-sync
 ```
 
-Open weights run on our hardware send nothing to anyone. Lumen's Chinese origin does not
-change that, though some procurement teams refuse Chinese-origin models, and the README says
-so plainly.
+Open weights run on our hardware send nothing to anyone.
 
 Go for everything that is not training or statistics.
 
@@ -167,48 +165,44 @@ itself is never published; the code that builds it is.
 
 ## 5. Model and training
 
-**Base: Lumen** ([`ATH-MaaS/Qwen-MT-Lumen`](https://huggingface.co/ATH-MaaS/Qwen-MT-Lumen),
-revision `3bf800f`), a fine-tuned Qwen3 14B from Alibaba Token Hub. 14.77B parameters, 29.5
-GB at 16-bit. It scored 84.0 on English to Thai with human judges at WMT26, the highest of
-any open-weight system there. [primary]
+**Base: Gemma 4 E4B** ([`google/gemma-4-E4B-it`](https://huggingface.co/google/gemma-4-E4B-it),
+revision `4ecc2ba`), 7.98B parameters, 16 GB at 16-bit, Apache-2.0, ungated. [primary]
 
-**Known gaps, tested first (step 2):** no published Thai-to-English result, chat context
-never evaluated, and its Apache-2.0 grant is stated in its README with no LICENSE file. If
-Lumen fails either direction or context on the untuned pilot, pause and decide whether to
-change base before any paid training.
+**Why this model.** It was chosen by test, not by reputation. Translation skill does not carry
+over to languages a model was not trained on, so a measured Thai result matters more than a
+"translation model" label. On 240 synthetic chat cases with correct context, untuned Gemma 4
+E4B was misleading 2.5% of the time English to Thai and 11.7% Thai to English. DeepSeek Flash,
+given no glossary or hints, was 3.3% and 10.0%. Lumen, the previous base, was 10.8% and 18.3%
+at 8-bit. Full results: `docs/steps/02-go-no-go.md`.
 
-Its paper also describes some model-generated training data without naming the generator.
-The model card says so.
+**Chat history goes in the system message.** Models that received history in the user turn
+often translated the conversation instead of the message.
 
-### 5.1 Two environments, one recipe
+Google does not disclose everything used to train Gemma 4. The model card says so.
+
+Gemma 4 12B is the option to try if more capacity is needed. It scored 1.7% and 11.7% on one
+set of 120 cases, and needs a cloud GPU to train.
+
+### 5.1 Where training runs
+
+The Mac and the cloud run the same PyTorch and PEFT script on the same 16-bit model, so a
+rehearsal on the Mac is a real test of what runs in the cloud.
 
 | | Laptop rehearsal | Real training |
 |---|---|---|
 | Purpose | Find every bug cheaply | Produce the released model |
-| Weights | Lumen 8-bit | Lumen 16-bit (`bfloat16`) |
-| Machine | M4 Max, 36 GB | Google A100 80 GB Spot (`a2-ultragpu-1g`), through section 7.1 |
-| Stack | MLX, `mlx_lm.lora` | PyTorch, PEFT, CUDA |
+| Machine | M4 Max, 36 GB | Google L4 24 GB Spot for LoRA, or A100 for full-weight training, through section 7.1 |
 | Data | Small chunks: 1,000, 5,000, then 20,000 rows | Full usable dataset |
-| Cost | Free, about 1,600 rows an hour (measured) | Target about 20 hours and $60 at the midpoint [estimate] |
 
-**The two stacks are different code.** An MLX rehearsal cannot find a bug in the PEFT cloud
-script, so the cloud script gets its own rehearsal: the exact script, on the Mac, against a
-tiny Qwen3 model on MPS. Labels, masking, resume, checkpoints and the adapter format are all
-exercised before any paid GPU hour.
-
-Shared settings: LoRA rank 64 on the attention projections of all 40 layers, batch 4 to
-start. Training order: label and masking checks, overfit one batch, 100-step run for memory
-and speed, then longer runs.
-
-Learning rates differ, and each is found by experiment. MLX diverged at 2e-4 and trained at
-5e-5, because it applies no gradient clipping. The PEFT script clips gradients at 1.0 and
-starts at 2e-4.
+Shared settings: LoRA rank 64 on the text decoder's attention projections, vision and audio
+frozen, batch 4 to start, gradient clipping at 1.0, learning rate 2e-4. Training order: label
+and masking checks, overfit one batch, 100-step run for memory and speed, then longer runs.
 
 **Experiments**, run in small chunks on the laptop first:
-- Trained vs untuned Lumen
+- Trained vs untuned Gemma 4 E4B, reported per direction, with Thai to English the first priority
+- LoRA vs training every weight, on the same 20,000 rows and the same test
 - 0, 4 and 8 turns of context
 - Real ThaiPo data vs public data only, same size
-- 8-bit vs 16-bit quality on the same adapter recipe
 
 Dev decisions use the dev suite and Jev. Opus is not used to choose checkpoints.
 
@@ -218,16 +212,16 @@ Three artefacts on Hugging Face, all from one training run:
 
 | Repository | Contents | Size | For |
 |---|---|---|---|
-| `sacreman/thaipoai` | Adapter merged into 16-bit weights | About 30 GB | In-house use on a GPU with 40 GB or more, with vLLM |
-| `sacreman/thaipoai-8bit-mlx` | The merged model converted to 8-bit MLX | About 15 GB | Macs |
-| `sacreman/thaipoai-adapter` | PEFT LoRA adapter alone | About 0.3 GB | People building on base Lumen |
+| `sacreman/thaipoai` | Adapter merged into 16-bit weights | About 16 GB | In-house use on a GPU with 24 GB or more, with vLLM |
+| `sacreman/thaipoai-8bit-mlx` | The merged model converted to 8-bit MLX | About 8 GB | Macs |
+| `sacreman/thaipoai-adapter` | PEFT LoRA adapter alone | Under 0.2 GB | People building on base Gemma 4 |
 
 The 8-bit build is converted from the merged 16-bit model, so it contains the training. Every
 artefact carries a sha256 manifest, the training run ID and the dataset manifest hash.
 
-**Before upload:** `extract-audit` passes, the model card credits Lumen and its base Qwen3,
-keeps Apache-2.0 notices and marks the weights as modified, and the Thai and English
-benchmark results are recorded. Published weights cannot be withdrawn once downloaded.
+**Before upload:** `extract-audit` passes, the model card credits Gemma 4 E4B, keeps Apache-2.0
+notices and marks the weights as modified, and the Thai and English benchmark results are
+recorded. Published weights cannot be withdrawn once downloaded.
 
 ---
 
@@ -291,8 +285,8 @@ rollouts on one target.
 and an output-bloat adapter rolled back at canary.
 
 **vLLM on real GPUs.** Serve the model on vLLM in the temporary pool and publish load
-numbers: p95, time to first token, and tokens per dollar. At 16-bit it needs a GPU with at
-least 40 GB [estimate], so an A100 40 GB is the smallest Google option. vLLM is the production serving
+numbers: p95, time to first token, and tokens per dollar. At 16-bit it fits a 24 GB card
+[estimate], so an L4 is the smallest Google option. vLLM is the production serving
 standard and needs an NVIDIA GPU.
 
 ### 7.1 Temporary GPU pipeline
@@ -314,8 +308,8 @@ and environment. No long-lived keys.
 **Flow:**
 1. Preflight: GPU quota, run ledger under its hard spending limit, reaper healthy.
 2. Terraform creates a zonal GKE cluster with a CPU system pool and a Spot GPU pool scaled
-   from zero: A100 80 GB (`a2-ultragpu-1g`) for 16-bit Lumen, and L4 for cheap rehearsals with
-   the small stand-in model. Everything is labelled with the run ID.
+   from zero: L4 24 GB (`g2-standard-8`) for LoRA, or A100 for full-weight training. Everything
+   is labelled with the run ID.
 3. Kueue admits a Kubernetes Job with `activeDeadlineSeconds`.
 4. Training writes atomic checkpoints with a completion marker at least every 30 minutes,
    and resumes after preemption. GKE gives only 15 seconds' notice by default. [primary] A
@@ -329,9 +323,9 @@ workflow, deletes any labelled resource past its deadline. Provider-side maximum
 set where available. A workflow that dies cannot leave a GPU running.
 
 **Budgets.** A billing alert does not cap spending and it lags, so the run ledger is the
-hard stop and the alert is only a backstop. The full training run is planned at about 20
-hours and about $60 at the midpoint [estimate], with a hard stop of $150 per run. The Job
-deadline is 50 hours and the reaper's deadline 56 hours.
+hard stop and the alert is only a backstop. Full-run time and cost are set from the timing
+run in step 11. The hard stop is $150 per run, and the reaper's deadline is six hours past
+the Job deadline.
 
 **Published drills:** kill a run mid-training and show the reaper clearing it, and a Spot
 reclaim with no lost work. Report cost per passing adapter.
@@ -396,22 +390,22 @@ on the laptop.**
 
 **Phase 1: Laptop, free**
 
-1. Prove the models train on the Mac. Done, including Lumen at 8-bit. Repo goes public after this.
-2. Suites and scorers on untuned 8-bit Lumen, covering both directions and chat context. Go or no-go on Lumen.
+1. Prove models train on the Mac. Done.
+2. Suites, scorers and model selection. Done: Gemma 4 E4B chosen as the base.
 3. `dataset-projector` on fixtures, then a count-only inventory of the archive.
 4. Consent basis recorded. Relabelling, filters, PII scrub, hold-out.
 5. Score production to set the baseline.
-6. 8-bit rehearsals in growing chunks: 1,000, 5,000, then 20,000 rows, each scored and leak tested. Fix what breaks.
-7. Experiments from section 5, at 8-bit.
-8. PEFT cloud script rehearsed on the Mac against a tiny Qwen3: training, interruption, resume, adapter reload, merge and 8-bit conversion.
+6. Rehearsals in growing chunks: 1,000, 5,000, then 20,000 rows, each scored and leak tested. Fix what breaks.
+7. Experiments from section 5.1.
+8. Interruption, resume, adapter reload, merge and 8-bit conversion on the Mac.
 
 **Phase 2: Cloud training**
 
-9. Terraform, Actions pipeline and `cmd/reaper`, run with the tiny model on a cheap L4 Spot node. Request GPU quota well before this step.
+9. Terraform, Actions pipeline and `cmd/reaper`, run with a throwaway adapter on a cheap L4 Spot node. Request GPU quota well before this step.
 10. Leak and Spot drills on that cheap node.
-11. A 100-step timing run on the A100 80 GB, under $1. Confirms memory and real speed, and reprices the full run.
-12. A 20,000-row run on the A100, about $6 [estimate], end to end.
-13. The full training run, target about 20 hours, then the leak test.
+11. A 100-step timing run on the training GPU, under $1. Confirms memory and speed, and prices the full run.
+12. A 20,000-row run, end to end.
+13. The full training run, then the leak test.
 14. Frozen benchmark on the 16-bit model. Retrain until it passes or the budget runs out.
 
 **Phase 3: Platform**
@@ -449,7 +443,7 @@ The README must explain, in this order:
 
 | Safe | Not safe |
 |---|---|
-| "Fine-tuned from Lumen, itself fine-tuned from Qwen3" | "Built from scratch" |
+| "Fine-tuned from Gemma 4 E4B" | "Built from scratch" |
 | "Trained on ThaiPo conversations used with consent, plus the public data in this manifest" | Describing individual conversations |
 | "Within X points of production on held-out chats, this date" | "Better than DeepSeek" unscoped |
 | "Runs in your cluster, sends nothing out" | "Your data never reached China", about any row DeepSeek labelled |
@@ -475,4 +469,4 @@ docs/{rollout-states.md,steps/,interview/}  reports/
 
 ## Sources
 
-[DeepSeek terms](https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html), [Anthropic terms](https://www.anthropic.com/legal/commercial-terms), [Lumen](https://huggingface.co/ATH-MaaS/Qwen-MT-Lumen), [Lumen paper](https://arxiv.org/abs/2610.19758), [WMT26 Findings](https://www2.statmt.org/wmt26/pdf/2026.wmt-1.48.pdf), [ALT](https://www2.nict.go.jp/astrec-att/member/mutiyama/ALT/), [TALPCo](https://github.com/matbahasa/TALPCo), [Tatoeba](https://tatoeba.org/en/terms_of_use), [scb-mt](https://github.com/vistec-AI/dataset-releases/releases), [vLLM LoRA](https://docs.vllm.ai/en/stable/features/lora/), [vLLM metrics](https://docs.vllm.ai/en/stable/design/metrics/), [llm-d adapter rollout](https://llm-d.ai/docs/operations/rollouts/adapter-rollout), [Inference Extension](https://github.com/kubernetes-sigs/gateway-api-inference-extension).
+[DeepSeek terms](https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html), [Anthropic terms](https://www.anthropic.com/legal/commercial-terms), [Gemma 4 E4B](https://huggingface.co/google/gemma-4-E4B-it), [Gemma 4 licence](https://ai.google.dev/gemma/docs/gemma_4_license), [WMT26 Findings](https://www2.statmt.org/wmt26/pdf/2026.wmt-1.48.pdf), [ALT](https://www2.nict.go.jp/astrec-att/member/mutiyama/ALT/), [TALPCo](https://github.com/matbahasa/TALPCo), [Tatoeba](https://tatoeba.org/en/terms_of_use), [scb-mt](https://github.com/vistec-AI/dataset-releases/releases), [vLLM LoRA](https://docs.vllm.ai/en/stable/features/lora/), [vLLM metrics](https://docs.vllm.ai/en/stable/design/metrics/), [llm-d adapter rollout](https://llm-d.ai/docs/operations/rollouts/adapter-rollout), [Inference Extension](https://github.com/kubernetes-sigs/gateway-api-inference-extension).

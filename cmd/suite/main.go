@@ -34,6 +34,7 @@ type Result struct {
 	ID        string   `json:"id"`
 	System    string   `json:"system"`
 	Variant   string   `json:"variant"`
+	Format    string   `json:"format,omitempty"`
 	Direction string   `json:"direction"`
 	Category  string   `json:"category"`
 	Output    string   `json:"output"`
@@ -43,8 +44,11 @@ type Result struct {
 }
 
 type config struct {
-	endpoint, model, system, variant string
-	client                           *http.Client
+	endpoint, model, system, variant, format string
+	apiKey                                   string
+	temperature                              float64
+	noThinking                               bool
+	client                                   *http.Client
 }
 
 func targetLanguage(direction string) (string, error) {
@@ -69,14 +73,117 @@ func contextFor(c Case, variant string) ([]string, error) {
 	return nil, fmt.Errorf("unknown variant %q", variant)
 }
 
-// lumenPrompt renders Lumen's documented format. It must match lumen_messages in
-// train/examples.py, because that is what the model is trained on.
+// lumenPrompt renders Lumen's documented format. With no context, and in the system
+// format, it must match lumen_messages in train/examples.py, which the model is trained on.
 func lumenPrompt(target, source string, context []string) string {
 	guidelines := ""
 	if len(context) > 0 {
 		guidelines = "Use this conversation only as context and do not translate it:\n" + strings.Join(context, "\n")
 	}
 	return fmt.Sprintf("Please translate the following text into %s.\n#guidelines\n%s\n#src_text\n%s", target, guidelines, source)
+}
+
+const referenceOnly = "Earlier messages in this chat, for reference only. Never translate them:\n"
+
+// chatMessages is an independently written comparison prompt. It is not ThaiPo's
+// production prompt, which also carries a glossary, hints and repair steps.
+func chatMessages(target, source string, context []string) []map[string]string {
+	system := "You translate chat messages between English and Thai. Translate the meaning, not word for word: " +
+		"idioms, slang and sarcasm must keep their intended meaning in the target language, and match the sender's tone. " +
+		"If something is truly ambiguous, keep the ambiguity and never invent facts. Output only the translation."
+	if len(context) > 0 {
+		system += "\n\n" + referenceOnly + strings.Join(context, "\n")
+	}
+	return []map[string]string{
+		{"role": "system", "content": system},
+		{"role": "user", "content": "Translate into " + target + ":\n\n" + source},
+	}
+}
+
+// hyPrompt is Hy-MT2's documented format, using its background-information form for history.
+// It must match render in train/examples.py.
+func hyPrompt(target, source string, context []string) string {
+	if len(context) == 0 {
+		return fmt.Sprintf("Translate the following text into %s. Note that you should only output the translated result without any additional explanation:\n\n%s", target, source)
+	}
+	return fmt.Sprintf("[Background Information]\n%s\n\nPlease translate the following text into %s, taking the provided background information into consideration.\n\n[Source Text]\n%s", strings.Join(context, "\n"), target, source)
+}
+
+// qingqiuPrompt is Qingqiu-MT's documented format. It must match qwen_messages in train/examples.py.
+func qingqiuPrompt(target, source string, context []string) string {
+	from := "English"
+	if target == "English" {
+		from = "Thai"
+	}
+	instruction := "Translate the meaning naturally and match the sender's tone."
+	if len(context) > 0 {
+		instruction += " Use this conversation only as context and do not translate it:\n" + strings.Join(context, "\n")
+	}
+	return fmt.Sprintf("Translate the following %s text into %s. Strictly follow the instruction below. Output only the translation.\n\ninstruction:\n%s\n\ntext:\n%s", from, target, instruction, source)
+}
+
+// indexPrompt is Index-Translate's documented Chinese format, with history as a soft constraint.
+func indexPrompt(target, source string, context []string) string {
+	name := "泰语"
+	if target == "English" {
+		name = "英语"
+	}
+	if len(context) == 0 {
+		return fmt.Sprintf("请将以下文本翻译为%s，直接输出翻译结果，不要进行任何解释。\n\n%s", name, source)
+	}
+	return fmt.Sprintf("请将以下文本翻译成%s，并且严格遵循所有约束要求。\n\n【源文】\n%s\n\n【约束要求】\n1. 【注意】以下是聊天中之前的消息，仅供理解语境，切勿翻译：\n%s\n\n只输出译文，不要有任何额外说明。", name, source, strings.Join(context, "\n"))
+}
+
+// chindaPrompt is ChindaMT's documented format, with history in its free-form Rules block.
+func chindaPrompt(target, source string, context []string) string {
+	from, tag := "English", "EN"
+	if target == "English" {
+		from, tag = "Thai", "TH"
+	}
+	rules := ""
+	if len(context) > 0 {
+		rules = "Rules:\n- Return only the translated text\n- Use these earlier messages only to understand the message. Never translate them:\n" + strings.Join(context, "\n") + "\n"
+	}
+	return fmt.Sprintf("Translate %s to %s.\n%s\n%s: %s", from, target, rules, tag, source)
+}
+
+// messagesFor renders one way of supplying chat history. With no history every format
+// is the same plain Lumen prompt.
+func messagesFor(format, target, source string, context []string) ([]map[string]string, error) {
+	user := func(content string) map[string]string { return map[string]string{"role": "user", "content": content} }
+	plain := lumenPrompt(target, source, nil)
+	switch format {
+	case "hy":
+		return []map[string]string{user(hyPrompt(target, source, context))}, nil
+	case "qingqiu":
+		return []map[string]string{user(qingqiuPrompt(target, source, context))}, nil
+	case "index":
+		return []map[string]string{user(indexPrompt(target, source, context))}, nil
+	case "chinda":
+		return []map[string]string{user(chindaPrompt(target, source, context))}, nil
+	}
+	if len(context) == 0 && format != "chat" {
+		switch format {
+		case "guidelines", "reference", "system", "before":
+			return []map[string]string{user(plain)}, nil
+		}
+	}
+	history := strings.Join(context, "\n")
+	switch format {
+	case "chat":
+		return chatMessages(target, source, context), nil
+	case "guidelines":
+		return []map[string]string{user(lumenPrompt(target, source, context))}, nil
+	case "reference":
+		guidelines := "This message is part of a chat. Translate only the text after #src_text. " +
+			"Never translate the earlier messages below, which are for reference only.\nEarlier messages:\n" + history
+		return []map[string]string{user(fmt.Sprintf("Please translate the following text into %s.\n#guidelines\n%s\n#src_text\n%s", target, guidelines, source))}, nil
+	case "system":
+		return []map[string]string{{"role": "system", "content": referenceOnly + history}, user(plain)}, nil
+	case "before":
+		return []map[string]string{user(referenceOnly + history + "\n\n" + plain)}, nil
+	}
+	return nil, fmt.Errorf("unknown format %q", format)
 }
 
 // checks are the deterministic failures. Meaning itself is left to the scorers.
@@ -91,17 +198,30 @@ func checks(c Case, output string) []string {
 	return failures
 }
 
-func (cfg config) translate(prompt string) (string, error) {
-	body, err := json.Marshal(map[string]any{
+func (cfg config) translate(messages []map[string]string) (string, error) {
+	payload := map[string]any{
 		"model":       cfg.model,
-		"messages":    []map[string]string{{"role": "user", "content": prompt}},
-		"temperature": 0,
+		"messages":    messages,
+		"temperature": cfg.temperature,
 		"max_tokens":  256,
-	})
+	}
+	if cfg.noThinking {
+		payload["thinking"] = map[string]string{"type": "disabled"}
+		payload["reasoning_effort"] = "none"
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
-	resp, err := cfg.client.Post(cfg.endpoint+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	request, err := http.NewRequest(http.MethodPost, cfg.endpoint+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if cfg.apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+	}
+	resp, err := cfg.client.Do(request)
 	if err != nil {
 		return "", err
 	}
@@ -130,7 +250,7 @@ func (cfg config) translate(prompt string) (string, error) {
 }
 
 func (cfg config) run(c Case) Result {
-	result := Result{ID: c.ID, System: cfg.system, Variant: cfg.variant, Direction: c.Direction, Category: c.Category}
+	result := Result{ID: c.ID, System: cfg.system, Variant: cfg.variant, Format: cfg.format, Direction: c.Direction, Category: c.Category}
 	target, err := targetLanguage(c.Direction)
 	if err != nil {
 		result.Error = err.Error()
@@ -141,8 +261,13 @@ func (cfg config) run(c Case) Result {
 		result.Error = err.Error()
 		return result
 	}
+	messages, err := messagesFor(cfg.format, target, c.Source, context)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
 	started := time.Now()
-	output, err := cfg.translate(lumenPrompt(target, c.Source, context))
+	output, err := cfg.translate(messages)
 	result.Millis = time.Since(started).Milliseconds()
 	if err != nil {
 		result.Error = err.Error()
@@ -182,6 +307,10 @@ func main() {
 	model := flag.String("model", "default", "model name sent to the endpoint")
 	system := flag.String("system", "", "name recorded on each result")
 	variant := flag.String("variant", "none", "context variant: none, correct or irrelevant")
+	format := flag.String("format", "chat", "how history is sent: system, guidelines, reference, before, chat, hy, qingqiu, index or chinda")
+	keyFile := flag.String("api-key-file", "", "file holding the API key, never printed")
+	temperature := flag.Float64("temperature", 0, "sampling temperature")
+	noThinking := flag.Bool("no-thinking", false, "turn off reasoning, for DeepSeek")
 	flag.Parse()
 	if *suite == "" || *output == "" || *system == "" {
 		log.Fatal("--suite, --out and --system are required")
@@ -197,7 +326,14 @@ func main() {
 	}
 	defer out.Close()
 	cfg := config{endpoint: strings.TrimRight(*endpoint, "/"), model: *model, system: *system, variant: *variant,
-		client: &http.Client{Timeout: 5 * time.Minute}}
+		format: *format, temperature: *temperature, noThinking: *noThinking, client: &http.Client{Timeout: 5 * time.Minute}}
+	if *keyFile != "" {
+		key, err := os.ReadFile(*keyFile)
+		if err != nil {
+			log.Fatal("cannot read the API key file")
+		}
+		cfg.apiKey = strings.TrimSpace(string(key))
+	}
 	count, err := runSuite(cfg, in, out)
 	if err != nil {
 		log.Fatal(err)
