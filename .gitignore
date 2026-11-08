@@ -1,0 +1,18 @@
+.private/
+.venv/
+__pycache__/
+.pytest_cache/
+data/private/
+runs/
+adapters/
+research_notes/
+reports/Open Thai translation base models.md
+reports/Running Lumen on a laptop.md
+models/
+.env
+.env.*
+*.key
+*_key
+*.pem
+.claude/
+.DS_Store
