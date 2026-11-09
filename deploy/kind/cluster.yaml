@@ -1,0 +1,14 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    syncFrequency: 5s
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: __STATE__/adapters
+        containerPath: /state/adapters
+      - hostPath: __STATE__/store
+        containerPath: /state/store
+        readOnly: true

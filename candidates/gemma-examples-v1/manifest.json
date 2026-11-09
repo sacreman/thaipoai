@@ -1,0 +1,69 @@
+{
+  "name": "gemma-examples-v1",
+  "frozen_on": "2026-11-09",
+  "base_model": "google/gemma-4-E4B-it",
+  "revision": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+  "adapter": null,
+  "temperature": 0,
+  "prompt_sha256": "0081cb98f3473bc5b94f7c43c1c8d689eba15b19844881a569948731dee41a4a",
+  "retrieval": {
+    "method": "tf-idf cosine over character trigrams of the message",
+    "k": 3,
+    "same_direction_only": true,
+    "header_sha256": "6e4bd754e3798645650da1b0c49310003deecdc319b35abf94a248c8bb5083ed",
+    "pairs": "pairs.jsonl",
+    "pairs_rows": 3870,
+    "pairs_sha256": "c8814d606c5aa8b712773b09c28691d240d48d027476a13b8bb4bd6e02f1bcbf",
+    "probe_sha256": "953e4b3d316f2246bec11f509d5bb923460814b74c1a77c0ca5177c83be683e5"
+  },
+  "evaluation": {
+    "judge": "jev-latest, three votes per translation, majority",
+    "compared_with": "deepseek-flash, temperature 0.7, no glossary",
+    "suites": {
+      "dev": "8db838b58da17542ebee129a2697cb26eca16958896d3111938cd08ebf60ffaf",
+      "dev2": "a3cdb7f0636736d4afc01d5b35948b69915419776007d0464aa4fd1bf55ffe16"
+    },
+    "versus_deepseek": {
+      "all": {
+        "pairs": 1196,
+        "wrong_deepseek": 185,
+        "wrong_candidate": 194,
+        "gap_points": 0.75,
+        "upper_95_points": 2.28
+      },
+      "en-th": {
+        "pairs": 596,
+        "wrong_deepseek": 80,
+        "wrong_candidate": 80,
+        "gap_points": 0.0,
+        "upper_95_points": 1.7
+      },
+      "th-en": {
+        "pairs": 600,
+        "wrong_deepseek": 105,
+        "wrong_candidate": 114,
+        "gap_points": 1.5,
+        "upper_95_points": 4.03
+      },
+      "none": {
+        "pairs": 598,
+        "wrong_deepseek": 108,
+        "wrong_candidate": 107,
+        "gap_points": -0.17,
+        "upper_95_points": 1.98
+      },
+      "correct": {
+        "pairs": 598,
+        "wrong_deepseek": 77,
+        "wrong_candidate": 87,
+        "gap_points": 1.67,
+        "upper_95_points": 3.84
+      }
+    },
+    "versus_untuned_gemma": {
+      "fixed": 41,
+      "broken": 29,
+      "p_better": 0.0941
+    }
+  }
+}

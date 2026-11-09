@@ -17,3 +17,6 @@ models/
 .claude/
 .DS_Store
 reports/Translation models to build on.md
+data/public/
+.terraform/
+*.tfstate*

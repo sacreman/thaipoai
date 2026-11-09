@@ -5,7 +5,7 @@ package main
 
 import (
 	"bufio"
-	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,6 +15,9 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/sacreman/thaipoai/internal/guards"
+	"github.com/sacreman/thaipoai/internal/llm"
 )
 
 // Case is one line of a suite file.
@@ -27,6 +30,7 @@ type Case struct {
 	Source            string   `json:"source"`
 	Meaning           string   `json:"meaning"`
 	LiteralTrap       string   `json:"literal_trap,omitempty"`
+	Notes             string   `json:"notes,omitempty"` // extra system text, chat format only
 }
 
 // Result is what a run records for a case.
@@ -81,23 +85,6 @@ func lumenPrompt(target, source string, context []string) string {
 		guidelines = "Use this conversation only as context and do not translate it:\n" + strings.Join(context, "\n")
 	}
 	return fmt.Sprintf("Please translate the following text into %s.\n#guidelines\n%s\n#src_text\n%s", target, guidelines, source)
-}
-
-const referenceOnly = "Earlier messages in this chat, for reference only. Never translate them:\n"
-
-// chatMessages is an independently written comparison prompt. It is not ThaiPo's
-// production prompt, which also carries a glossary, hints and repair steps.
-func chatMessages(target, source string, context []string) []map[string]string {
-	system := "You translate chat messages between English and Thai. Translate the meaning, not word for word: " +
-		"idioms, slang and sarcasm must keep their intended meaning in the target language, and match the sender's tone. " +
-		"If something is truly ambiguous, keep the ambiguity and never invent facts. Output only the translation."
-	if len(context) > 0 {
-		system += "\n\n" + referenceOnly + strings.Join(context, "\n")
-	}
-	return []map[string]string{
-		{"role": "system", "content": system},
-		{"role": "user", "content": "Translate into " + target + ":\n\n" + source},
-	}
 }
 
 // hyPrompt is Hy-MT2's documented format, using its background-information form for history.
@@ -171,7 +158,7 @@ func messagesFor(format, target, source string, context []string) ([]map[string]
 	history := strings.Join(context, "\n")
 	switch format {
 	case "chat":
-		return chatMessages(target, source, context), nil
+		return llm.ChatMessages(target, source, context, ""), nil
 	case "guidelines":
 		return []map[string]string{user(lumenPrompt(target, source, context))}, nil
 	case "reference":
@@ -179,9 +166,9 @@ func messagesFor(format, target, source string, context []string) ([]map[string]
 			"Never translate the earlier messages below, which are for reference only.\nEarlier messages:\n" + history
 		return []map[string]string{user(fmt.Sprintf("Please translate the following text into %s.\n#guidelines\n%s\n#src_text\n%s", target, guidelines, source))}, nil
 	case "system":
-		return []map[string]string{{"role": "system", "content": referenceOnly + history}, user(plain)}, nil
+		return []map[string]string{{"role": "system", "content": llm.ReferenceOnly + history}, user(plain)}, nil
 	case "before":
-		return []map[string]string{user(referenceOnly + history + "\n\n" + plain)}, nil
+		return []map[string]string{user(llm.ReferenceOnly + history + "\n\n" + plain)}, nil
 	}
 	return nil, fmt.Errorf("unknown format %q", format)
 }
@@ -199,54 +186,8 @@ func checks(c Case, output string) []string {
 }
 
 func (cfg config) translate(messages []map[string]string) (string, error) {
-	payload := map[string]any{
-		"model":       cfg.model,
-		"messages":    messages,
-		"temperature": cfg.temperature,
-		"max_tokens":  256,
-	}
-	if cfg.noThinking {
-		payload["thinking"] = map[string]string{"type": "disabled"}
-		payload["reasoning_effort"] = "none"
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	request, err := http.NewRequest(http.MethodPost, cfg.endpoint+"/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	if cfg.apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+cfg.apiKey)
-	}
-	resp, err := cfg.client.Do(request)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("status %d", resp.StatusCode)
-	}
-	var decoded struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return "", err
-	}
-	if len(decoded.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response")
-	}
-	return strings.TrimSpace(decoded.Choices[0].Message.Content), nil
+	client := llm.Client{Endpoint: cfg.endpoint, Model: cfg.model, APIKey: cfg.apiKey, Temperature: cfg.temperature, NoThinking: cfg.noThinking, HTTP: cfg.client}
+	return client.Chat(context.Background(), messages)
 }
 
 func (cfg config) run(c Case) Result {
@@ -265,6 +206,9 @@ func (cfg config) run(c Case) Result {
 	if err != nil {
 		result.Error = err.Error()
 		return result
+	}
+	if cfg.format == "chat" && c.Notes != "" {
+		messages = llm.ChatMessages(target, c.Source, context, c.Notes)
 	}
 	started := time.Now()
 	output, err := cfg.translate(messages)
@@ -300,6 +244,44 @@ func runSuite(cfg config, in io.Reader, out io.Writer) (int, error) {
 	return count, scanner.Err()
 }
 
+// recheck runs the guards over saved outputs, so a guard can be measured against scored results.
+func recheck(cases, results string, out io.Writer) error {
+	byID := map[string]Case{}
+	in, err := os.ReadFile(cases)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(in), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var c Case
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			return err
+		}
+		byID[c.ID] = c
+	}
+	saved, err := os.ReadFile(results)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(out)
+	for _, line := range strings.Split(string(saved), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var r Result
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			return err
+		}
+		failed := guards.Check(guards.Request{Source: byID[r.ID].Source, Output: r.Output, TargetThai: r.Direction == "en-th"})
+		if err := encoder.Encode(map[string]any{"id": r.ID, "variant": r.Variant, "direction": r.Direction, "guards": failed}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func main() {
 	suite := flag.String("suite", "", "suite file, one JSON case per line")
 	output := flag.String("out", "", "results file")
@@ -311,7 +293,19 @@ func main() {
 	keyFile := flag.String("api-key-file", "", "file holding the API key, never printed")
 	temperature := flag.Float64("temperature", 0, "sampling temperature")
 	noThinking := flag.Bool("no-thinking", false, "turn off reasoning, for DeepSeek")
+	recheckFile := flag.String("recheck", "", "saved results to re-run the guards over, instead of calling a model")
 	flag.Parse()
+	if *recheckFile != "" {
+		destination, err := os.Create(*output)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer destination.Close()
+		if err := recheck(*suite, *recheckFile, destination); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if *suite == "" || *output == "" || *system == "" {
 		log.Fatal("--suite, --out and --system are required")
 	}

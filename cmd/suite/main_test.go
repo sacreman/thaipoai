@@ -124,6 +124,23 @@ func run(t *testing.T, handler http.HandlerFunc, suite string, variant string) [
 	return results
 }
 
+func TestNotesReachTheChatSystemPrompt(t *testing.T) {
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+	cfg := config{endpoint: server.URL, model: "m", system: "s", variant: "none", format: "chat", client: server.Client()}
+	if got := cfg.run(Case{ID: "a", Direction: "en-th", Source: "hello", Notes: "NEAREST EXAMPLE"}); got.Error != "" {
+		t.Fatal(got.Error)
+	}
+	if !strings.Contains(body, "NEAREST EXAMPLE") {
+		t.Fatalf("notes missing from %s", body)
+	}
+}
+
 func TestSendsThePromptAndRecordsTheOutput(t *testing.T) {
 	var prompt string
 	handler := func(w http.ResponseWriter, r *http.Request) {

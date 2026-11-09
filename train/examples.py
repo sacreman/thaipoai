@@ -80,9 +80,11 @@ CHAT_SYSTEM = (
 )
 
 
-def chat_messages(source, target_lang, context=()):
-    """The prompt Gemma 4 E4B was tested with. It must match the `chat` format in cmd/suite."""
+def chat_messages(source, target_lang, context=(), notes=""):
+    """The prompt Gemma 4 E4B was tested with. It must match llm.ChatMessages in Go."""
     system = CHAT_SYSTEM
+    if notes:
+        system += "\n\n" + notes
     if context:
         system += "\n\n" + REFERENCE_ONLY + "\n".join(context)
     return [

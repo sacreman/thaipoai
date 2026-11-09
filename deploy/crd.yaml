@@ -1,0 +1,75 @@
+# One object per target, and its name is the target. The API server enforces the rules, so
+# there is no admission webhook to run or to race:
+#  - names are unique, so a target has one rollout object
+#  - the rule below refuses a new spec until the controller has finished the current one
+# status has its own subresource, so a user who can edit the spec cannot type a stable adapter.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: adapterrollouts.thaipoai.dev
+spec:
+  group: thaipoai.dev
+  names: {kind: AdapterRollout, listKind: AdapterRolloutList, plural: adapterrollouts, singular: adapterrollout, shortNames: [ar]}
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources: {status: {}}
+      additionalPrinterColumns:
+        - {name: Phase, type: string, jsonPath: .status.phase}
+        - {name: Candidate, type: string, jsonPath: .spec.adapter.name}
+        - {name: Stable, type: string, jsonPath: .status.stable.name}
+        - {name: Reason, type: string, jsonPath: .status.reason}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          x-kubernetes-validations:
+            - rule: >-
+                (self.spec.adapter.sha256 == oldSelf.spec.adapter.sha256 && self.spec.adapter.name == oldSelf.spec.adapter.name &&
+                self.spec.adapter.url == oldSelf.spec.adapter.url && self.spec.attempt == oldSelf.spec.attempt &&
+                self.spec.canary.percent == oldSelf.spec.canary.percent && self.spec.canary.minSamples == oldSelf.spec.canary.minSamples &&
+                self.spec.canary.timeoutMinutes == oldSelf.spec.canary.timeoutMinutes) ||
+                (has(oldSelf.status) && has(oldSelf.status.observed) && has(oldSelf.status.phase) &&
+                has(oldSelf.status.observedAttempt) && oldSelf.status.observed == oldSelf.spec.adapter.sha256 &&
+                oldSelf.status.observedAttempt == oldSelf.spec.attempt &&
+                oldSelf.status.phase in ['Promoted', 'Blocked', 'RolledBack', 'Inconclusive'])
+              message: a rollout is in progress on this target, and its spec cannot change until it finishes
+          properties:
+            spec:
+              type: object
+              required: [adapter]
+              properties:
+                adapter:
+                  type: object
+                  required: [name, url, sha256]
+                  properties:
+                    name: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,40}$', maxLength: 41}
+                    url: {type: string, pattern: '^https?://', maxLength: 2048}
+                    sha256: {type: string, pattern: '^[0-9a-f]{64}$', maxLength: 64}
+                attempt: {type: integer, minimum: 0, default: 0, description: Raise this to retry the same adapter.}
+                canary:
+                  type: object
+                  default: {}
+                  properties:
+                    percent: {type: integer, minimum: 1, maximum: 50, default: 10}
+                    minSamples: {type: integer, minimum: 1, default: 100}
+                    timeoutMinutes: {type: integer, minimum: 1, default: 60}
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                observed: {type: string, maxLength: 64}
+                observedAttempt: {type: integer}
+                phase: {type: string, maxLength: 20}
+                reason: {type: string, maxLength: 500}
+                previous:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                stable:
+                  type: object
+                  properties:
+                    name: {type: string, maxLength: 41}
+                    url: {type: string, maxLength: 2048}
+                    sha256: {type: string, maxLength: 64}

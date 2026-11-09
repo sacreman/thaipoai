@@ -342,41 +342,38 @@ nothing wider.
 **Competitors:**
 1. Our model alone, at 16-bit
 2. **Production: exactly what ThaiPo delivered, from the archive**
-3. Opus 5.5 translating fresh, as a quality ceiling
 
-Opus scores its own translations in slot 3, so that slot is labelled self-marked and is
-reference only. The headline is 1 against 2, where the judge wrote neither.
+The headline is 1 against 2, where the judge wrote neither.
 
 The 8-bit copy is benchmarked separately, so the quality cost of compression is on record.
 The pass below is judged on the 16-bit model, because that is what is released.
 
 **Scoring** (blind, shuffled):
-- **Opus 5.5:** 1-5 on meaning with a defect class (actor, polarity, question, number,
-  gender, invented, dropped, typo, language, commentary, leak, other), plus which of two
-  better conveys the meaning.
-- **Jev:** independent yes/no on "do these mean the same?". Disagreements with Opus are
-  published.
+- **Jev:** yes/no on "does this translation carry the intended meaning?", asked three
+  times per translation. The majority counts. A tie or no votes leaves that translation
+  out, and the count is published.
 
-**Opus only ever scores frozen candidates.** Its scores never feed training data, in
-line with Anthropic's terms. [primary]
+Opus 5.5 was dropped as the scorer on 9 November 2026 because of its cost. One judge gives
+no defect classes and no second opinion. Frozen candidates are judged by the same scorer as
+dev decisions, so a candidate can be fitted to Jev's habits, and held-out suites only limit that.
 
 **Suites:**
 - **Real-chat benchmark:** 2,000 held-out lines per direction.
 - **Meaning suite:** 300 cases of idiom, slang, sarcasm, euphemism and sayings in both
   directions, each with intended meaning and a literal trap that must not appear. Drafted
-  by DeepSeek, reviewed by Opus 5.5, used on frozen candidates only.
+  by DeepSeek, used on frozen candidates only.
 - **Dev suite:** about 200 cases drafted by DeepSeek, for training decisions only.
 
 **Pass (M2), per direction:**
-- Misleading rate (score 2 or lower) no more than **1.5 percentage points** above
-  production, by one-sided 95% upper bound on the paired difference.
-- A/B preference not clearly behind: lower bound of preference share over 0.40.
+- Misleading rate (Jev's majority says the meaning is not carried) no more than
+  **1.5 percentage points** above production, by one-sided 95% upper bound on the paired
+  difference.
 
 Thresholds are fixed before the sealed benchmark is opened. [estimate] 2,000 per direction
 resolves a 1.5-point margin at the error rates seen so far; recompute from the first run.
 
 **Limitation stated in the README:** all judging is by AI. No human has validated the
-scorers, and Opus's blind spots would be invisible here.
+scorer, and Jev's blind spots would be invisible here.
 
 ---
 
@@ -449,7 +446,7 @@ The README must explain, in this order:
 | "Runs in your cluster, sends nothing out" | "Your data never reached China", about any row DeepSeek labelled |
 | "A continuous learning loop mines glossaries" | "Reinforcement learning" |
 | "In production since May 2026" | "Almost a year" |
-| "Judged by Opus 5.5 and Jev" | "Human-validated" |
+| "Judged by Jev" | "Human-validated" |
 | "Built with AI coding agents, designed and reviewed by me" | Implying it was hand-typed |
 
 **Out of scope for this model:** impersonation, romance or recruitment scams, safety,

@@ -1,0 +1,60 @@
+# Rendered with envsubst by .github/workflows/train.yml. Kueue releases it from suspend, and
+# the flavor in queue.yaml puts it on the Spot GPU pool.
+#
+# train.cloud_job does not exist yet. docs/steps/09-cloud-pipeline.md lists what it must do.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: thaipoai-train
+  namespace: thaipoai
+  labels:
+    kueue.x-k8s.io/queue-name: training
+    thaipoai-run-id: ${RUN_ID}
+spec:
+  suspend: true
+  activeDeadlineSeconds: ${JOB_DEADLINE_SECONDS}
+  backoffLimit: 6
+  podFailurePolicy:
+    rules:
+      - action: Ignore # a Spot reclaim is not the trainer's fault, and must not use up retries
+        onPodConditions:
+          - type: DisruptionTarget
+            status: "True"
+  template:
+    metadata:
+      labels:
+        thaipoai-run-id: ${RUN_ID}
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 15 # all GKE gives on a Spot reclaim
+      containers:
+        - name: trainer
+          image: ${TRAINER_IMAGE}:${GIT_SHA}
+          command: ["python", "-m", "train.cloud_job"]
+          env:
+            - name: RUN_ID
+              value: "${RUN_ID}"
+            - name: GIT_SHA
+              value: "${GIT_SHA}"
+            - name: DATASET_URI
+              value: "${DATASET_URI}"
+            - name: OUTPUT_URI
+              value: "${OUTPUT_URI}"
+            - name: SCRATCH_DIR
+              value: /scratch
+          resources:
+            requests:
+              cpu: ${JOB_CPU}
+              memory: ${JOB_MEMORY}
+              nvidia.com/gpu: 1
+            limits:
+              memory: ${JOB_MEMORY}
+              nvidia.com/gpu: 1
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+      volumes:
+        - name: scratch
+          emptyDir: {}

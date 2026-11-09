@@ -1,0 +1,125 @@
+# Everything except the model replicas, which are in model-fake.yaml or model-mac.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adapter-store
+spec:
+  selector: {matchLabels: {app: adapter-store}}
+  template:
+    metadata: {labels: {app: adapter-store}}
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.29-alpine
+          volumeMounts: [{name: store, mountPath: /usr/share/nginx/html, readOnly: true}]
+      volumes: [{name: store, hostPath: {path: /state/store}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: adapter-store
+spec:
+  selector: {app: adapter-store}
+  ports: [{port: 80}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model
+spec:
+  selector: {app: model}
+  ports: [{name: http, port: 8000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  selector: {matchLabels: {app: gateway}}
+  template:
+    metadata: {labels: {app: gateway}}
+    spec:
+      containers:
+        - name: gateway
+          image: thaipoai/gateway:dev
+          imagePullPolicy: Never
+          args: ["--listen=:8088", "--backend=http://model:8000", "--model=__BASE__", "--timeout=120s", "--routing=/etc/routing/routing.json"]
+          ports: [{containerPort: 8088}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8088}, periodSeconds: 2}
+          volumeMounts: [{name: routing, mountPath: /etc/routing}]
+      volumes:
+        - {name: routing, configMap: {name: rollout-translate, optional: true}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  selector: {app: gateway}
+  ports: [{port: 8088}]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rollout-controller
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rollout-controller
+rules:
+  - {apiGroups: [thaipoai.dev], resources: [adapterrollouts], verbs: [get, list, watch, update, patch]} # update is for the finalizer
+  - {apiGroups: [thaipoai.dev], resources: [adapterrollouts/status], verbs: [get, update, patch]}
+  - {apiGroups: [""], resources: [configmaps], verbs: [get, list, watch, create, update, patch]}
+  - {apiGroups: [""], resources: [pods], verbs: [get, list, watch]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rollout-controller
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: rollout-controller}
+subjects: [{kind: ServiceAccount, name: rollout-controller}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollout-controller
+spec:
+  selector: {matchLabels: {app: rollout-controller}}
+  template:
+    metadata: {labels: {app: rollout-controller}}
+    spec:
+      serviceAccountName: rollout-controller
+      containers:
+        - name: controller
+          image: thaipoai/rollout-controller:dev
+          imagePullPolicy: Never
+          args: ["--base-model=__BASE__", "--verify-timeout=__VERIFY__", "--poll=1s"]
+          volumeMounts: [{name: suites, mountPath: /suites}]
+      volumes:
+        - {name: suites, configMap: {name: suites}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic
+spec:
+  replicas: 0
+  selector: {matchLabels: {app: traffic}}
+  template:
+    metadata: {labels: {app: traffic}}
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: curl
+          image: curlimages/curl:8.15.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              while true; do
+                for text in "The room is 1450 baht." "Could you send me the address again?" "We will arrive at the hotel tomorrow." "Thank you for waiting so long."; do
+                  curl -s -m 120 -o /dev/null -X POST http://gateway:8088/v1/translate -H 'content-type: application/json' \
+                    -d "{\"source_lang\":\"en\",\"target_lang\":\"th\",\"text\":\"$text\",\"speaker\":{\"gender\":\"male\"}}"
+                  sleep 0.05
+                done
+              done
