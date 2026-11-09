@@ -41,13 +41,13 @@ ready_replicas() { k get deployment model -o 'jsonpath={.status.readyReplicas}';
 
 k rollout status deployment/rollout-controller --timeout=180s >/dev/null
 k rollout status deployment/gateway --timeout=180s >/dev/null
+k rollout status deployment/model --timeout=180s >/dev/null
 traffic 1
 
 echo "--- first rollout, from the base model"
 start good1
 check "first rollout" Promoted "$(finish)"
 check "stable pointer moved" good1 "$(field .status.stable.name)"
-k rollout status deployment/model --timeout=180s >/dev/null
 
 echo "--- two rollouts on one target, and controller killed mid-canary"
 start good2

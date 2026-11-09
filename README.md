@@ -23,8 +23,8 @@ flowchart LR
 | 1 | Inspect the repo, replace the plan | Done |
 | 2 | Build the evaluation sets first | Corpus held-out splits and suites ready. FLORES+ pending |
 | 3 | Prove training works: overfit, all weights move, exact resume | Built, awaiting review |
-| 4 | Benchmark the laptop over several hundred real steps | Next |
-| 5 | Train on public data, evaluating checkpoints as it goes | |
+| 4 | Benchmark the laptop over several hundred real steps | Measured, awaiting review |
+| 5 | Train on public data, evaluating checkpoints as it goes | Next |
 | 6 | Adapt to application data, once consent records exist | Blocked |
 | 7 | Compare with the production system, per direction | |
 

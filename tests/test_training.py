@@ -36,7 +36,7 @@ def test_it_memorises_a_tiny_dataset(tmp_path):
     losses = trainer.run(300, log_every=1000)
     assert losses[-1] < 0.05 < losses[0]
     for source, target in DATA:
-        assert trainer.model.greedy(source, limit=8) == target
+        assert trainer.model.translate([source], limit=8) == [target]
 
 
 def test_every_weight_updates_including_the_shared_embedding(tmp_path):

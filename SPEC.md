@@ -66,12 +66,11 @@ needs, so the baseline trains on the same data for comparison.
   only after translation quality is established.
 - Checkpoints hold weights, optimizer, RNG, sampler state and step. Config A is 3.32 GB [measured].
 
-**Sizing, not a benchmark.** Config A, 30 synthetic steps: 32x64 at 2.00 steps/s, 6,565 non-pad
-tokens/s, 9.75 GB MLX peak, 13.0 GB footprint; 64x48 at 1.26 steps/s, 6,110 tokens/s, 12.6 GB and
-15.9 GB. Identical runs varied from 500 to 1,926 ms per step on a shared machine, and nothing ran
-longer than about a minute, so sustained speed is unknown. One pass of 500,000, 2M and 5M pairs in
-one direction is about 1.0, 4.1 and 10.3 hours when clean, and 2.2, 8.9 and 22.2 when contended
-[estimate]. Step 4 replaces these numbers.
+**Measured speed.** On the first corpus, 500 real steps with other apps open: the full model at about
+2,500 tokens per second and 1.6 hours per epoch, the baseline at 8,783 and 0.47 hours [measured]. With
+MLX's cache capped at 2 GB the full model peaks at 12.3 GB. Eight epochs is about 13 hours for the full
+model and 4 for the baseline [estimate]. Runs lasted minutes, so sustained speed is untested
+(`docs/steps/04-laptop-benchmark.md`).
 
 ### Tokenizer
 
@@ -194,6 +193,11 @@ training time and operating cost.
 - Jev's three-vote majority for meaning (`evaluation/compare_systems.py`), paired on discordant cases
   with a one-sided 95% upper bound.
 
+**During training**, every half epoch scores chrF on a fixed 2,000-row validation sample, both ways,
+per direction and per source. Training keeps the best checkpoint and stops after three scores without
+a gain of at least 0.1 (`train/evaluate.py`). The test split is not touched. Suites hold intended
+meanings, not reference translations, so they are judged by Jev on the best checkpoint.
+
 A gap of 1.5 points or less is reported as within reach of production. It is a reference, not a
 gate on publishing the result. Thresholds are set before a held-out set is opened.
 
@@ -209,7 +213,7 @@ A step is done when it **runs for real, has a test that fails if it breaks, has 
 3. Validate training: learn a tiny dataset, every intended weight updates, a checkpoint restores state
    bit for bit and then tracks a control run within floating-point noise. Built, awaiting approval.
 4. Benchmark the laptop: several hundred representative steps, measuring GPU use, memory and
-   sustained throughput, before estimating a full run.
+   sustained throughput, before estimating a full run. Measured, awaiting approval.
 5. Train on selected public data. Evaluate checkpoints regularly and use measured progress to decide
    whether more training is worth it.
 6. Adapt to application data, emphasising verified corrections, conversational language and

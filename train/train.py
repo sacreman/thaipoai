@@ -18,6 +18,7 @@ import mlx.nn as nn
 import mlx.optimizers as optim
 from mlx.utils import tree_flatten, tree_unflatten
 
+from train.evaluate import Evaluator, validation_scorer
 from train.model import CONFIGS, Config, Translator
 from train.tokenizer import BOS, EOS, PAD, Tokenizer
 
@@ -150,8 +151,8 @@ class Trainer:
         mx.eval(self.model.parameters(), self.optimizer.state, mx.random.state)
         self.step, self.epoch, self.batch = meta["step"], meta["epoch"], meta["batch"]
 
-    def run(self, max_steps, checkpoint_minutes=120, log_every=50):
-        """Train until max_steps. Returns this call's loss per step."""
+    def run(self, max_steps, checkpoint_minutes=120, log_every=50, evaluate=None, evaluate_every=0):
+        """Train until max_steps, or until evaluate says to stop. Returns this call's loss per step."""
         losses, started, last_save, tokens = [], time.perf_counter(), time.perf_counter(), 0
         self.model.train()
         self.out.mkdir(parents=True, exist_ok=True)
@@ -172,6 +173,11 @@ class Trainer:
                         log.write(json.dumps({"step": self.step, "epoch": self.epoch, "loss": round(losses[-1], 4), "grad_norm": round(norm.item(), 3),
                                               "tokens_per_second": round(tokens / now), "peak_gb": round(mx.get_peak_memory() / 2**30, 2)}) + "\n")
                         log.flush()
+                        started, tokens = time.perf_counter(), 0
+                    if evaluate and self.step % evaluate_every == 0:
+                        if evaluate(self):
+                            max_steps = self.step
+                        started, tokens, last_save = time.perf_counter(), 0, time.perf_counter()
                     if time.perf_counter() - last_save > checkpoint_minutes * 60:
                         self.save()
                         last_save = time.perf_counter()
@@ -189,16 +195,20 @@ def main():
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--max-steps", type=int, help="stop early, for benchmarks")
     args = parser.parse_args()
+    mx.set_cache_limit(2 * 2**30)  # saves about 8 GB and stops swap growing, at no real cost in speed
     wanted = set(args.sources.split(","))
     rows = [json.loads(line) for line in Path("data/public/corpus/train.jsonl").read_text(encoding="utf8").splitlines()]
     rows = [r for r in rows if r["source"] in wanted]
-    examples, dropped = examples_from(rows, Tokenizer())
+    tokenizer = Tokenizer()
+    examples, dropped = examples_from(rows, tokenizer)
     settings = Settings()
     per_epoch = len(batches_for(examples, settings.batch_tokens, settings.seed, 0))
     total = per_epoch * args.epochs
     trainer = Trainer(CONFIGS[args.config], examples, args.out, total, settings)
+    validation = [json.loads(line) for line in Path("data/public/corpus/validation.jsonl").read_text(encoding="utf8").splitlines()]
+    evaluator = Evaluator(args.out, validation_scorer([r for r in validation if r["source"] in wanted], tokenizer))
     print(json.dumps({"pairs": len(rows), "examples": len(examples), "too_long": dropped, "batches_per_epoch": per_epoch, "total_steps": total, "resuming_at": trainer.step}), flush=True)
-    losses = trainer.run(args.max_steps or total)
+    losses = trainer.run(args.max_steps or total, evaluate=evaluator, evaluate_every=max(1, per_epoch // 2))
     print(json.dumps({"step": trainer.step, "last_loss": round(losses[-1], 4) if losses else None}))
 
 
