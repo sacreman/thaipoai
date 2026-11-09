@@ -3,7 +3,6 @@ package rollout
 import (
 	"fmt"
 	"math"
-	"strings"
 	"time"
 )
 
@@ -23,7 +22,6 @@ const (
 	CanaryMaxInfraShare = 0.2
 	// canaryMinInfraSamples stops a handful of early errors from ending a rollout.
 	canaryMinInfraSamples = 20
-	checksumMismatch      = "checksum mismatch"
 )
 
 func logChoose(n, k int) float64 {
@@ -66,39 +64,19 @@ func FisherP(failed1, total1, failed2, total2 int) float64 {
 	return math.Min(p, 1)
 }
 
-// Replica is what one adapter-sync reported about the candidate.
-type Replica struct {
-	Ready bool
-	Error string
-}
-
-// EvaluateVerify decides whether every replica holds the candidate. A bad checksum on every
-// replica means the artefact is not what it claims to be, so it blocks. On only some replicas it
-// may be a damaged download, so like any other local failure it waits and then gives up without
-// blaming the candidate.
-func EvaluateVerify(replicas []Replica, elapsed, timeout time.Duration) (Decision, string) {
-	ready, mismatched := 0, 0
-	for _, replica := range replicas {
-		if strings.Contains(replica.Error, checksumMismatch) {
-			mismatched++
-		}
-		if replica.Ready {
-			ready++
-		}
-	}
-	if len(replicas) > 0 && mismatched == len(replicas) {
-		return Block, checksumMismatch
-	}
-	if len(replicas) > 0 && ready == len(replicas) {
-		return Advance, fmt.Sprintf("%d of %d replicas verified", ready, len(replicas))
+// EvaluateVerify decides whether every replica serves the candidate. A replica that does not says
+// nothing about the candidate's quality, so it waits and then gives up without blaming it.
+func EvaluateVerify(ready, total int, elapsed, timeout time.Duration) (Decision, string) {
+	if total > 0 && ready == total {
+		return Advance, fmt.Sprintf("%d of %d replicas serve the candidate", ready, total)
 	}
 	if elapsed > timeout {
-		return GiveUp, fmt.Sprintf("only %d of %d replicas verified in time", ready, len(replicas))
+		return GiveUp, fmt.Sprintf("only %d of %d replicas served the candidate in time", ready, total)
 	}
 	return Wait, ""
 }
 
-// Pair is one test case translated by both adapters.
+// Pair is one test case translated by both models.
 type Pair struct {
 	StablePass, CandidatePass, Error bool
 }
@@ -157,7 +135,7 @@ func EvaluateShadow(t Tally) (Decision, string) {
 	return Advance, reason
 }
 
-// Stats are the per-adapter counts from the gateway. They are counts only, so no live message
+// Stats are the per-model counts from the gateway. They are counts only, so no live message
 // is ever read or sent to a judge.
 type Stats struct {
 	Requests      int64 `json:"requests"`
@@ -185,9 +163,9 @@ func lengthRatio(s Stats) float64 {
 	return float64(s.OutputChars) / float64(s.SourceChars)
 }
 
-// EvaluateCanary judges live traffic. Latency is reported but not gated, because both adapters
+// EvaluateCanary judges live traffic. Latency is reported but not gated, because both models
 // share one queue and a slow candidate slows stable with it. Output length does not have that
-// problem. Infrastructure is checked first so an outage can never look like a bad adapter.
+// problem. Infrastructure is checked first so an outage can never look like a bad model.
 func EvaluateCanary(stable, candidate Stats, minSamples int64, elapsed, timeout time.Duration) (Decision, string) {
 	attempts := candidate.Requests + candidate.InfraErrors
 	if attempts >= canaryMinInfraSamples && float64(candidate.InfraErrors)/float64(attempts) > CanaryMaxInfraShare {

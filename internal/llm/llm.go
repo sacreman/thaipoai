@@ -1,4 +1,4 @@
-// Package llm holds the prompt the model is trained and tested with, and a client for any
+// Package llm holds the prompt models are tested with, and a client for any
 // OpenAI-compatible chat endpoint.
 package llm
 
@@ -22,7 +22,7 @@ const chatSystem = "You translate chat messages between English and Thai. Transl
 	"idioms, slang and sarcasm must keep their intended meaning in the target language, and match the sender's tone. " +
 	"If something is truly ambiguous, keep the ambiguity and never invent facts. Output only the translation."
 
-// ChatMessages must match chat_messages in train/examples.py, which the model is trained on.
+// ChatMessages is the prompt every model is tested with. cmd/fake-model parses it.
 // Notes carries optional facts about the speakers.
 func ChatMessages(target, source string, context []string, notes string) []Message {
 	system := chatSystem

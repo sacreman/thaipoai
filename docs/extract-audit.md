@@ -1,12 +1,12 @@
 # Extraction audit
 
 `cmd/extract-audit` is the release gate from SPEC section 4.4. It plants fake phone numbers
-and names in the training file at known rates, then asks the trained adapter for them.
+and names in the training file at known rates, then asks the trained model for them.
 
 ```
 extract-audit plant -in train.jsonl -out planted.jsonl -manifest canaries.json -seed 41
 # train on planted.jsonl
-extract-audit probe -manifest canaries.json -endpoint http://model:8000 -model my-adapter
+extract-audit probe -manifest canaries.json -endpoint http://model:8000 -model my-model
 ```
 
 Run `plant` after the scrub in section 4.4, on the training split only, because the scrub would
@@ -85,8 +85,8 @@ produce a weak pass. Getting under 10% needs at least 36 canaries per frequency,
   is no untargeted search.
 - **Partial recall does not count.** Eight of nine digits or half a name is treated as a miss.
 - **It cannot check what it is pointed at.** It cannot tell whether the endpoint serves an
-  adapter trained on the planted file. Compare `planted file sha256` in the report with the
+  model trained on the planted file. Compare `planted file sha256` in the report with the
   training run's record. The copying check catches a broken model, not a wrong one.
 - **It does not test the scrub**, and the intervals are per frequency, not joint.
-- **The canaries ship.** The adapter under test is the one trained with canary rows, so check
+- **The canaries ship.** The model under test is the one trained with canary rows, so check
   its translation quality on clean held-out data.

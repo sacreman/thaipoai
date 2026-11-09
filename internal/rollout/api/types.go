@@ -1,4 +1,4 @@
-// Package api is the AdapterRollout resource.
+// Package api is the ModelRollout resource.
 package api
 
 import (
@@ -24,13 +24,13 @@ type CanarySpec struct {
 
 // Spec is one rollout. The object's name is the target.
 type Spec struct {
-	Adapter rollout.Adapter `json:"adapter"`
-	Attempt int             `json:"attempt,omitempty"`
-	Canary  CanarySpec      `json:"canary,omitempty"`
+	Model   rollout.Model `json:"model"`
+	Attempt int           `json:"attempt,omitempty"`
+	Canary  CanarySpec    `json:"canary,omitempty"`
 }
 
 // ID names this attempt in the gateway's counts.
-func (s Spec) ID() string { return s.Adapter.SHA256 + "/" + strconv.Itoa(s.Attempt) }
+func (s Spec) ID() string { return s.Model.SHA256 + "/" + strconv.Itoa(s.Attempt) }
 
 // CanaryResult is the last count read from the gateways.
 type CanaryResult struct {
@@ -40,40 +40,40 @@ type CanaryResult struct {
 
 // Outcome is one finished rollout.
 type Outcome struct {
-	Adapter string        `json:"adapter"`
-	Phase   rollout.Phase `json:"phase"`
-	Reason  string        `json:"reason,omitempty"`
-	At      metav1.Time   `json:"at"`
+	Model  string        `json:"model"`
+	Phase  rollout.Phase `json:"phase"`
+	Reason string        `json:"reason,omitempty"`
+	At     metav1.Time   `json:"at"`
 }
 
 // Status is written only by the controller, through the status subresource.
 type Status struct {
-	Observed        string           `json:"observed,omitempty"` // the adapter sha256 this status is about
-	ObservedAttempt int              `json:"observedAttempt"`
-	Phase           rollout.Phase    `json:"phase,omitempty"`
-	Reason          string           `json:"reason,omitempty"`
-	Stable          *rollout.Adapter `json:"stable,omitempty"`
-	Previous        *rollout.Adapter `json:"previous,omitempty"`
-	PhaseStartedAt  *metav1.Time     `json:"phaseStartedAt,omitempty"`
-	Golden          *rollout.Tally   `json:"golden,omitempty"`
-	Shadow          *rollout.Tally   `json:"shadow,omitempty"`
-	Canary          *CanaryResult    `json:"canary,omitempty"`
-	History         []Outcome        `json:"history,omitempty"`
+	Observed        string         `json:"observed,omitempty"` // the model sha256 this status is about
+	ObservedAttempt int            `json:"observedAttempt"`
+	Phase           rollout.Phase  `json:"phase,omitempty"`
+	Reason          string         `json:"reason,omitempty"`
+	Stable          *rollout.Model `json:"stable,omitempty"`
+	Previous        *rollout.Model `json:"previous,omitempty"`
+	PhaseStartedAt  *metav1.Time   `json:"phaseStartedAt,omitempty"`
+	Golden          *rollout.Tally `json:"golden,omitempty"`
+	Shadow          *rollout.Tally `json:"shadow,omitempty"`
+	Canary          *CanaryResult  `json:"canary,omitempty"`
+	History         []Outcome      `json:"history,omitempty"`
 }
 
-// AdapterRollout moves one target to a new adapter.
-type AdapterRollout struct {
+// ModelRollout moves one target to a new model.
+type ModelRollout struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Spec              Spec   `json:"spec"`
 	Status            Status `json:"status,omitempty"`
 }
 
-// AdapterRolloutList is a list of rollouts.
-type AdapterRolloutList struct {
+// ModelRolloutList is a list of rollouts.
+type ModelRolloutList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []AdapterRollout `json:"items"`
+	Items           []ModelRollout `json:"items"`
 }
 
 // ponytail: deep copies go through JSON instead of generated code. One object, reconciled every few seconds.
@@ -90,14 +90,14 @@ func roundTrip[T any](in *T) *T {
 }
 
 // DeepCopyObject implements runtime.Object.
-func (a *AdapterRollout) DeepCopyObject() runtime.Object { return roundTrip(a) }
+func (a *ModelRollout) DeepCopyObject() runtime.Object { return roundTrip(a) }
 
 // DeepCopyObject implements runtime.Object.
-func (a *AdapterRolloutList) DeepCopyObject() runtime.Object { return roundTrip(a) }
+func (a *ModelRolloutList) DeepCopyObject() runtime.Object { return roundTrip(a) }
 
 // AddToScheme registers the resource.
 func AddToScheme(scheme *runtime.Scheme) error {
-	scheme.AddKnownTypes(GroupVersion, &AdapterRollout{}, &AdapterRolloutList{})
+	scheme.AddKnownTypes(GroupVersion, &ModelRollout{}, &ModelRolloutList{})
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
 }

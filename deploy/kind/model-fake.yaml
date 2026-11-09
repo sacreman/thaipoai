@@ -1,4 +1,4 @@
-# Three replicas of a deterministic stand-in for vLLM, for the fault matrix.
+# Three replicas of a deterministic model server, for the fault matrix.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,16 +14,4 @@ spec:
           image: thaipoai/fake-model:dev
           imagePullPolicy: Never
           ports: [{containerPort: 8000}]
-        - name: adapter-sync
-          image: thaipoai/adapter-sync:dev
-          imagePullPolicy: Never
-          args: ["--dir=/adapters", "--backend=http://127.0.0.1:8000", "--interval=1s", "--retry=3s"]
-          ports: [{containerPort: 8090, name: state}]
-          livenessProbe: {httpGet: {path: /healthz, port: state}}
-          readinessProbe: {httpGet: {path: /readyz, port: state}, periodSeconds: 1}
-          volumeMounts:
-            - {name: adapters, mountPath: /adapters}
-            - {name: desired, mountPath: /etc/adapter-sync}
-      volumes:
-        - {name: adapters, emptyDir: {}}
-        - {name: desired, configMap: {name: rollout-translate, optional: true}}
+          readinessProbe: {httpGet: {path: /health, port: 8000}, periodSeconds: 1}

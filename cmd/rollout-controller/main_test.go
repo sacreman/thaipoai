@@ -23,19 +23,18 @@ import (
 )
 
 var (
-	stable    = rollout.Adapter{Name: "stable", URL: "http://s/a", SHA256: strings.Repeat("a", 64)}
-	candidate = rollout.Adapter{Name: "cand", URL: "http://s/c", SHA256: strings.Repeat("c", 64)}
+	stable    = rollout.Model{Name: "stable", SHA256: strings.Repeat("a", 64)}
+	candidate = rollout.Model{Name: "cand", SHA256: strings.Repeat("c", 64)}
 )
 
 type world struct {
 	t       *testing.T
 	r       *reconciler
 	clock   time.Time
-	replica string
-	broken  map[string]bool // adapters that give bad translations
+	missing bool            // the replica does not serve the candidate
+	broken  map[string]bool // models that give bad translations
 	down    bool            // the model server is unreachable
 	perChat time.Duration   // how long each translation takes
-	attempt int             // the attempt the replicas report
 	stats   map[string]any
 	chats   int
 }
@@ -48,13 +47,13 @@ func newWorld(t *testing.T) *world {
 	running := func(name, app, ip string) *corev1.Pod {
 		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Labels: map[string]string{"app": app}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: ip}}
 	}
-	ar := &api.AdapterRollout{
+	mr := &api.ModelRollout{
 		ObjectMeta: metav1.ObjectMeta{Name: "translate", Namespace: "default"},
-		Spec:       api.Spec{Adapter: candidate, Canary: api.CanarySpec{Percent: 10, MinSamples: 100, TimeoutMinutes: 30}},
+		Spec:       api.Spec{Model: candidate, Canary: api.CanarySpec{Percent: 10, MinSamples: 100, TimeoutMinutes: 30}},
 		Status:     api.Status{Stable: &stable},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ar, running("m1", "model", "1.1.1.1"), running("g1", "gateway", "2.2.2.2")).WithStatusSubresource(&api.AdapterRollout{}).Build()
-	w := &world{t: t, clock: time.Unix(1000000, 0), replica: "ready", broken: map[string]bool{}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mr, running("m1", "model", "1.1.1.1"), running("g1", "gateway", "2.2.2.2")).WithStatusSubresource(&api.ModelRollout{}).Build()
+	w := &world{t: t, clock: time.Unix(1000000, 0), broken: map[string]bool{}}
 	w.stats = healthyStats()
 	w.r = &reconciler{
 		Client: c, reader: c, namespace: "default", base: "base", verifyTimeout: time.Minute, poll: time.Second,
@@ -73,12 +72,12 @@ func newWorld(t *testing.T) *world {
 			return "ไทย", nil
 		},
 		fetch: func(_ context.Context, url string, into any) error {
-			var body any
-			switch {
-			case strings.HasSuffix(url, "/state"):
-				body = map[string]any{"adapters": []map[string]any{{"registered": candidate.Registered(), "state": w.replica, "error": w.replicaError(), "attempt": w.attempt}}}
-			default:
-				body = w.stats
+			var body any = w.stats
+			if strings.Contains(url, "/v1/models/") {
+				if w.missing {
+					return errors.New("status 404")
+				}
+				body = map[string]string{"id": candidate.Registered()}
 			}
 			raw, _ := json.Marshal(body)
 			return json.Unmarshal(raw, into)
@@ -87,27 +86,20 @@ func newWorld(t *testing.T) *world {
 	return w
 }
 
-func (w *world) replicaError() string {
-	if w.replica == "mismatch" {
-		return "checksum mismatch"
-	}
-	return ""
-}
-
 func healthyStats() map[string]any {
-	return map[string]any{"rollout_id": candidate.SHA256 + "/0", "adapters": map[string]rollout.Stats{
+	return map[string]any{"rollout_id": candidate.SHA256 + "/0", "models": map[string]rollout.Stats{
 		stable.Registered():    {Requests: 1000, GuardFailures: 10, SourceChars: 10000, OutputChars: 12000},
 		candidate.Registered(): {Requests: 200, GuardFailures: 2, SourceChars: 2000, OutputChars: 2400},
 	}}
 }
 
-func (w *world) get() *api.AdapterRollout {
+func (w *world) get() *api.ModelRollout {
 	w.t.Helper()
-	var ar api.AdapterRollout
-	if err := w.r.Get(context.Background(), types.NamespacedName{Name: "translate", Namespace: "default"}, &ar); err != nil {
+	var mr api.ModelRollout
+	if err := w.r.Get(context.Background(), types.NamespacedName{Name: "translate", Namespace: "default"}, &mr); err != nil {
 		w.t.Fatal(err)
 	}
-	return &ar
+	return &mr
 }
 
 func (w *world) reconcile() ctrl.Result {
@@ -120,12 +112,12 @@ func (w *world) reconcile() ctrl.Result {
 }
 
 // until reconciles until the phase is reached, or fails after too many tries.
-func (w *world) until(want rollout.Phase) *api.AdapterRollout {
+func (w *world) until(want rollout.Phase) *api.ModelRollout {
 	w.t.Helper()
 	for i := 0; i < 20; i++ {
 		w.reconcile()
-		if ar := w.get(); ar.Status.Phase == want {
-			return ar
+		if mr := w.get(); mr.Status.Phase == want {
+			return mr
 		}
 	}
 	w.t.Fatalf("never reached %s, stuck at %+v", want, w.get().Status)
@@ -145,9 +137,9 @@ func (w *world) routing() rollout.Routing {
 
 func TestAGoodCandidateIsPromotedAndBecomesStable(t *testing.T) {
 	w := newWorld(t)
-	ar := w.until(rollout.Promoted)
-	if ar.Status.Stable.Name != "cand" || len(ar.Status.History) != 1 || ar.Status.History[0].Phase != rollout.Promoted {
-		t.Fatalf("%+v", ar.Status)
+	mr := w.until(rollout.Promoted)
+	if mr.Status.Stable.Name != "cand" || len(mr.Status.History) != 1 || mr.Status.History[0].Phase != rollout.Promoted {
+		t.Fatalf("%+v", mr.Status)
 	}
 	w.reconcile()
 	if route := w.routing(); route.Stable != candidate.Registered() || route.Candidate != "" {
@@ -157,7 +149,7 @@ func TestAGoodCandidateIsPromotedAndBecomesStable(t *testing.T) {
 
 func TestACanaryGetsTrafficOnlyInCanary(t *testing.T) {
 	w := newWorld(t)
-	w.stats = map[string]any{"rollout_id": "other", "adapters": map[string]rollout.Stats{}} // no samples yet
+	w.stats = map[string]any{"rollout_id": "other", "models": map[string]rollout.Stats{}} // no samples yet
 	w.until(rollout.Shadow)
 	w.reconcile()
 	if route := w.routing(); route.Candidate != "" {
@@ -170,33 +162,24 @@ func TestACanaryGetsTrafficOnlyInCanary(t *testing.T) {
 	}
 }
 
-func TestAChecksumMismatchBlocksWithoutTraffic(t *testing.T) {
+func TestACandidateAReplicaDoesNotServeIsInconclusiveWithoutTraffic(t *testing.T) {
 	w := newWorld(t)
-	w.replica = "mismatch"
-	ar := w.until(rollout.Blocked)
-	if ar.Status.Stable.Name != "stable" || w.chats != 0 {
-		t.Fatalf("%+v chats %d", ar.Status, w.chats)
-	}
-}
-
-func TestALoadFailureOnAReplicaIsInconclusive(t *testing.T) {
-	w := newWorld(t)
-	w.replica = "failed"
+	w.missing = true
 	w.reconcile()
 	w.reconcile()
 	w.clock = w.clock.Add(2 * time.Minute)
-	ar := w.until(rollout.Inconclusive)
-	if ar.Status.Stable.Name != "stable" {
-		t.Fatalf("%+v", ar.Status)
+	mr := w.until(rollout.Inconclusive)
+	if mr.Status.Stable.Name != "stable" || w.chats != 0 {
+		t.Fatalf("%+v chats %d", mr.Status, w.chats)
 	}
 }
 
 func TestABadCandidateIsBlockedAtTheGoldenGate(t *testing.T) {
 	w := newWorld(t)
 	w.broken[candidate.Registered()] = true
-	ar := w.until(rollout.Blocked)
-	if ar.Status.Golden == nil || ar.Status.Golden.Worse != 3 || ar.Status.Shadow != nil {
-		t.Fatalf("%+v", ar.Status)
+	mr := w.until(rollout.Blocked)
+	if mr.Status.Golden == nil || mr.Status.Golden.Worse != 3 || mr.Status.Shadow != nil {
+		t.Fatalf("%+v", mr.Status)
 	}
 }
 
@@ -209,13 +192,13 @@ func TestAModelOutageDuringGoldenIsInconclusive(t *testing.T) {
 
 func TestBadCanaryNumbersRollBack(t *testing.T) {
 	w := newWorld(t)
-	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "adapters": map[string]rollout.Stats{
+	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "models": map[string]rollout.Stats{
 		stable.Registered():    {Requests: 1000, GuardFailures: 10, SourceChars: 10000, OutputChars: 12000},
 		candidate.Registered(): {Requests: 200, GuardFailures: 2, SourceChars: 2000, OutputChars: 7000},
 	}}
-	ar := w.until(rollout.RolledBack)
-	if ar.Status.Stable.Name != "stable" {
-		t.Fatalf("%+v", ar.Status)
+	mr := w.until(rollout.RolledBack)
+	if mr.Status.Stable.Name != "stable" {
+		t.Fatalf("%+v", mr.Status)
 	}
 	w.reconcile()
 	if route := w.routing(); route.Stable != stable.Registered() || route.Candidate != "" {
@@ -225,7 +208,7 @@ func TestBadCanaryNumbersRollBack(t *testing.T) {
 
 func TestACanaryOutageIsInconclusiveNotARollback(t *testing.T) {
 	w := newWorld(t)
-	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "adapters": map[string]rollout.Stats{
+	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "models": map[string]rollout.Stats{
 		stable.Registered():    {Requests: 1000, SourceChars: 10000, OutputChars: 12000},
 		candidate.Registered(): {Requests: 10, GuardFailures: 10, SourceChars: 100, OutputChars: 900, InfraErrors: 90},
 	}}
@@ -234,7 +217,7 @@ func TestACanaryOutageIsInconclusiveNotARollback(t *testing.T) {
 
 func TestTooLittleTrafficIsInconclusive(t *testing.T) {
 	w := newWorld(t)
-	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "adapters": map[string]rollout.Stats{}}
+	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "models": map[string]rollout.Stats{}}
 	w.until(rollout.Canary)
 	w.reconcile()
 	w.clock = w.clock.Add(time.Hour)
@@ -248,15 +231,15 @@ func TestGatewaysOnOldRoutingAreIgnored(t *testing.T) {
 	w.stats = stale
 	w.until(rollout.Canary)
 	w.reconcile()
-	if ar := w.get(); ar.Status.Phase != rollout.Canary || ar.Status.Canary.Candidate.Requests != 0 {
-		t.Fatalf("%+v", ar.Status)
+	if mr := w.get(); mr.Status.Phase != rollout.Canary || mr.Status.Canary.Candidate.Requests != 0 {
+		t.Fatalf("%+v", mr.Status)
 	}
 }
 
 func TestAControllerRestartMidCanaryResumes(t *testing.T) {
 	w := newWorld(t)
 	good := w.stats
-	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "adapters": map[string]rollout.Stats{}}
+	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "models": map[string]rollout.Stats{}}
 	w.until(rollout.Canary)
 	w.reconcile()
 	before := w.routing()
@@ -271,7 +254,7 @@ func TestAControllerRestartMidCanaryResumes(t *testing.T) {
 
 func TestReapplyingIsIdempotentAfterACrashBeforeApply(t *testing.T) {
 	w := newWorld(t)
-	ar := w.until(rollout.Promoted)
+	mr := w.until(rollout.Promoted)
 	var cm corev1.ConfigMap
 	key := client.ObjectKey{Name: "rollout-translate", Namespace: "default"}
 	if err := w.r.Get(context.Background(), key, &cm); err == nil {
@@ -279,7 +262,7 @@ func TestReapplyingIsIdempotentAfterACrashBeforeApply(t *testing.T) {
 	}
 	w.reconcile()
 	if route := w.routing(); route.Stable != candidate.Registered() {
-		t.Fatalf("%+v after %s", route, ar.Status.Phase)
+		t.Fatalf("%+v after %s", route, mr.Status.Phase)
 	}
 }
 
@@ -288,12 +271,11 @@ func TestANewSpecStartsAgainAndKeepsStable(t *testing.T) {
 	w.broken[candidate.Registered()] = true
 	w.until(rollout.Blocked)
 	delete(w.broken, candidate.Registered())
-	ar := w.get()
-	ar.Spec.Attempt = 1
-	if err := w.r.Update(context.Background(), ar); err != nil {
+	mr := w.get()
+	mr.Spec.Attempt = 1
+	if err := w.r.Update(context.Background(), mr); err != nil {
 		t.Fatal(err)
 	}
-	w.attempt = 1
 	w.stats["rollout_id"] = candidate.SHA256 + "/1"
 	got := w.until(rollout.Promoted)
 	if len(got.Status.History) != 2 || got.Status.ObservedAttempt != 1 {
@@ -303,12 +285,12 @@ func TestANewSpecStartsAgainAndKeepsStable(t *testing.T) {
 
 func TestTheFirstRolloutComparesAgainstTheBaseModel(t *testing.T) {
 	w := newWorld(t)
-	ar := w.get()
-	ar.Status.Stable = nil
-	if err := w.r.Status().Update(context.Background(), ar); err != nil {
+	mr := w.get()
+	mr.Status.Stable = nil
+	if err := w.r.Status().Update(context.Background(), mr); err != nil {
 		t.Fatal(err)
 	}
-	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "adapters": map[string]rollout.Stats{
+	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "models": map[string]rollout.Stats{
 		"base":                 {Requests: 1000, SourceChars: 10000, OutputChars: 12000},
 		candidate.Registered(): {Requests: 200, SourceChars: 2000, OutputChars: 2400},
 	}}
@@ -320,18 +302,18 @@ func TestTheFirstRolloutComparesAgainstTheBaseModel(t *testing.T) {
 
 func TestASlowReplayDoesNotUseUpTheCanaryTimeout(t *testing.T) {
 	w := newWorld(t)
-	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "adapters": map[string]rollout.Stats{}}
+	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "models": map[string]rollout.Stats{}}
 	w.perChat = time.Hour
 	w.until(rollout.Canary)
 	w.reconcile()
-	if ar := w.get(); ar.Status.Phase != rollout.Canary {
-		t.Fatalf("%+v", ar.Status)
+	if mr := w.get(); mr.Status.Phase != rollout.Canary {
+		t.Fatalf("%+v", mr.Status)
 	}
 }
 
 func TestDeletingARolloutMidCanaryReturnsTrafficToStable(t *testing.T) {
 	w := newWorld(t)
-	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "adapters": map[string]rollout.Stats{}}
+	w.stats = map[string]any{"rollout_id": candidate.SHA256 + "/0", "models": map[string]rollout.Stats{}}
 	w.until(rollout.Canary)
 	w.reconcile()
 	if w.routing().Candidate == "" {
@@ -344,7 +326,7 @@ func TestDeletingARolloutMidCanaryReturnsTrafficToStable(t *testing.T) {
 	if route := w.routing(); route.Candidate != "" || route.Stable != stable.Registered() {
 		t.Fatalf("%+v", route)
 	}
-	var left api.AdapterRollout
+	var left api.ModelRollout
 	if err := w.r.Get(context.Background(), client.ObjectKey{Name: "translate", Namespace: "default"}, &left); err == nil {
 		t.Fatal("finalizer was not removed")
 	}
@@ -358,7 +340,7 @@ func TestARecreatedRolloutCarriesOnFromWhatIsServed(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.reconcile()
-	again := &api.AdapterRollout{ObjectMeta: metav1.ObjectMeta{Name: "translate", Namespace: "default"}, Spec: api.Spec{Adapter: stable}}
+	again := &api.ModelRollout{ObjectMeta: metav1.ObjectMeta{Name: "translate", Namespace: "default"}, Spec: api.Spec{Model: stable}}
 	if err := w.r.Create(context.Background(), again); err != nil {
 		t.Fatal(err)
 	}
@@ -381,30 +363,14 @@ func TestAPromotionKeepsTheOldStableUntilTheNextRollout(t *testing.T) {
 	if !strings.Contains(read(), stable.SHA256) {
 		t.Fatalf("old stable dropped: %s", read())
 	}
-	ar := w.get()
-	ar.Spec.Attempt = 1
-	if err := w.r.Update(context.Background(), ar); err != nil {
+	mr := w.get()
+	mr.Spec.Attempt = 1
+	if err := w.r.Update(context.Background(), mr); err != nil {
 		t.Fatal(err)
 	}
 	w.reconcile()
 	w.reconcile()
 	if strings.Contains(read(), stable.SHA256) {
 		t.Fatalf("old stable kept too long: %s", read())
-	}
-}
-
-func TestAReplicaStateFromAnotherAttemptIsIgnored(t *testing.T) {
-	w := newWorld(t)
-	w.replica = "mismatch"
-	ar := w.get()
-	ar.Spec.Attempt = 3 // the fake replica reports attempt 0, the stale result of an earlier try
-	if err := w.r.Update(context.Background(), ar); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 5; i++ {
-		w.reconcile()
-	}
-	if got := w.get(); got.Status.Phase != rollout.Verifying {
-		t.Fatalf("%+v", got.Status)
 	}
 }

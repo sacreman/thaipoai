@@ -179,7 +179,7 @@ func TestTrafficSplitsAtTheCanaryPercentage(t *testing.T) {
 func TestACandidateOutageFallsBackToStableAndIsCountedAsInfrastructure(t *testing.T) {
 	chat := func(_ context.Context, model string, _ []llm.Message) (string, error) {
 		if model == "cand" {
-			return "", errors.New("adapter not loaded")
+			return "", errors.New("model not loaded")
 		}
 		return "ราคา 450 บาท", nil
 	}
@@ -188,20 +188,20 @@ func TestACandidateOutageFallsBackToStableAndIsCountedAsInfrastructure(t *testin
 	if code != 200 || out.Model != "stable" {
 		t.Fatalf("code %d out %+v", code, out)
 	}
-	if cand := s.metrics.adapters["cand"]; cand.InfraErrors != 1 || cand.Requests != 0 {
+	if cand := s.metrics.models["cand"]; cand.InfraErrors != 1 || cand.Requests != 0 {
 		t.Fatalf("%+v", cand)
 	}
 }
 
-func TestPerAdapterCountsRestartWithANewRollout(t *testing.T) {
+func TestPerModelCountsRestartWithANewRollout(t *testing.T) {
 	ts, s := routed(t, 99, func(context.Context, string, []llm.Message) (string, error) { return "ราคา 540 บาท", nil })
 	post(t, ts, toThai)
-	if stable := s.metrics.adapters["stable"]; stable.Requests != 1 || stable.GuardFailures != 1 || stable.OutputChars == 0 {
+	if stable := s.metrics.models["stable"]; stable.Requests != 1 || stable.GuardFailures != 1 || stable.OutputChars == 0 {
 		t.Fatalf("%+v", stable)
 	}
 	s.setRouting(rollout.Routing{ID: "r2", Stable: "stable"})
-	if len(s.metrics.adapters) != 0 {
-		t.Fatalf("%+v", s.metrics.adapters)
+	if len(s.metrics.models) != 0 {
+		t.Fatalf("%+v", s.metrics.models)
 	}
 }
 

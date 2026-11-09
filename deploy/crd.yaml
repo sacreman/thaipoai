@@ -2,14 +2,14 @@
 # there is no admission webhook to run or to race:
 #  - names are unique, so a target has one rollout object
 #  - the rule below refuses a new spec until the controller has finished the current one
-# status has its own subresource, so a user who can edit the spec cannot type a stable adapter.
+# status has its own subresource, so a user who can edit the spec cannot type a stable model.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: adapterrollouts.thaipoai.dev
+  name: modelrollouts.thaipoai.dev
 spec:
   group: thaipoai.dev
-  names: {kind: AdapterRollout, listKind: AdapterRolloutList, plural: adapterrollouts, singular: adapterrollout, shortNames: [ar]}
+  names: {kind: ModelRollout, listKind: ModelRolloutList, plural: modelrollouts, singular: modelrollout, shortNames: [mr]}
   scope: Namespaced
   versions:
     - name: v1alpha1
@@ -18,7 +18,7 @@ spec:
       subresources: {status: {}}
       additionalPrinterColumns:
         - {name: Phase, type: string, jsonPath: .status.phase}
-        - {name: Candidate, type: string, jsonPath: .spec.adapter.name}
+        - {name: Candidate, type: string, jsonPath: .spec.model.name}
         - {name: Stable, type: string, jsonPath: .status.stable.name}
         - {name: Reason, type: string, jsonPath: .status.reason}
       schema:
@@ -27,28 +27,27 @@ spec:
           required: [spec]
           x-kubernetes-validations:
             - rule: >-
-                (self.spec.adapter.sha256 == oldSelf.spec.adapter.sha256 && self.spec.adapter.name == oldSelf.spec.adapter.name &&
-                self.spec.adapter.url == oldSelf.spec.adapter.url && self.spec.attempt == oldSelf.spec.attempt &&
+                (self.spec.model.sha256 == oldSelf.spec.model.sha256 && self.spec.model.name == oldSelf.spec.model.name &&
+                self.spec.attempt == oldSelf.spec.attempt &&
                 self.spec.canary.percent == oldSelf.spec.canary.percent && self.spec.canary.minSamples == oldSelf.spec.canary.minSamples &&
                 self.spec.canary.timeoutMinutes == oldSelf.spec.canary.timeoutMinutes) ||
                 (has(oldSelf.status) && has(oldSelf.status.observed) && has(oldSelf.status.phase) &&
-                has(oldSelf.status.observedAttempt) && oldSelf.status.observed == oldSelf.spec.adapter.sha256 &&
+                has(oldSelf.status.observedAttempt) && oldSelf.status.observed == oldSelf.spec.model.sha256 &&
                 oldSelf.status.observedAttempt == oldSelf.spec.attempt &&
                 oldSelf.status.phase in ['Promoted', 'Blocked', 'RolledBack', 'Inconclusive'])
               message: a rollout is in progress on this target, and its spec cannot change until it finishes
           properties:
             spec:
               type: object
-              required: [adapter]
+              required: [model]
               properties:
-                adapter:
+                model:
                   type: object
-                  required: [name, url, sha256]
+                  required: [name, sha256]
                   properties:
                     name: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,40}$', maxLength: 41}
-                    url: {type: string, pattern: '^https?://', maxLength: 2048}
                     sha256: {type: string, pattern: '^[0-9a-f]{64}$', maxLength: 64}
-                attempt: {type: integer, minimum: 0, default: 0, description: Raise this to retry the same adapter.}
+                attempt: {type: integer, minimum: 0, default: 0, description: Raise this to retry the same model.}
                 canary:
                   type: object
                   default: {}
@@ -71,5 +70,4 @@ spec:
                   type: object
                   properties:
                     name: {type: string, maxLength: 41}
-                    url: {type: string, maxLength: 2048}
                     sha256: {type: string, maxLength: 64}

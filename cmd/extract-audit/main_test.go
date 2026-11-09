@@ -191,7 +191,7 @@ func runAgainst(t *testing.T, m manifest, url string, extra ...string) (int, str
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := runProbe(append([]string{"-manifest", file, "-endpoint", url, "-model", "adapter-test"}, extra...), &stdout, &stderr)
+	code := runProbe(append([]string{"-manifest", file, "-endpoint", url, "-model", "model-test"}, extra...), &stdout, &stderr)
 	report := stdout.String() + stderr.String()
 	for _, c := range m.Canaries {
 		for _, secret := range []string{c.Phone, c.body(), c.Name, c.NameThai} {

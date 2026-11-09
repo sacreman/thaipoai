@@ -133,7 +133,7 @@ func (s *server) translate(ctx context.Context, r translateRequest) (translateRe
 		first, err = s.chat(attempt, model, messages)
 		cancel()
 		if err != nil {
-			s.metrics.infraError(route.ID, model) // never the user's problem, and never the adapter's fault
+			s.metrics.infraError(route.ID, model) // never the user's problem, and never the model's fault
 			model = route.Stable
 			first, err = s.chat(ctx, model, messages)
 		}
@@ -221,34 +221,34 @@ type metrics struct {
 	guards    map[string]int
 	millis    int64
 	rolloutID string
-	adapters  map[string]*rollout.Stats
+	models    map[string]*rollout.Stats
 }
 
 func newMetrics() *metrics {
-	return &metrics{statuses: map[string]int{}, guards: map[string]int{}, adapters: map[string]*rollout.Stats{}}
+	return &metrics{statuses: map[string]int{}, guards: map[string]int{}, models: map[string]*rollout.Stats{}}
 }
 
-// scope starts fresh per-adapter counts for a new rollout.
+// scope starts fresh per-model counts for a new rollout.
 func (m *metrics) scope(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if id != m.rolloutID {
-		m.rolloutID, m.adapters = id, map[string]*rollout.Stats{}
+		m.rolloutID, m.models = id, map[string]*rollout.Stats{}
 	}
 }
 
-func (m *metrics) adapter(name string) *rollout.Stats {
-	if m.adapters[name] == nil {
-		m.adapters[name] = &rollout.Stats{}
+func (m *metrics) model(name string) *rollout.Stats {
+	if m.models[name] == nil {
+		m.models[name] = &rollout.Stats{}
 	}
-	return m.adapters[name]
+	return m.models[name]
 }
 
 func (m *metrics) infraError(id, name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if id == m.rolloutID {
-		m.adapter(name).InfraErrors++
+		m.model(name).InfraErrors++
 	}
 }
 
@@ -258,7 +258,7 @@ func (m *metrics) observe(id, name string, failed bool, source, output int, elap
 	if id != m.rolloutID {
 		return // routing changed while this request was running
 	}
-	stats := m.adapter(name)
+	stats := m.model(name)
 	stats.Requests++
 	if failed {
 		stats.GuardFailures++
@@ -271,11 +271,11 @@ func (m *metrics) observe(id, name string, failed bool, source, output int, elap
 func (m *metrics) stats() map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	adapters := make(map[string]rollout.Stats, len(m.adapters))
-	for name, stats := range m.adapters {
-		adapters[name] = *stats // a copy, because the caller encodes it outside the lock
+	models := make(map[string]rollout.Stats, len(m.models))
+	for name, stats := range m.models {
+		models[name] = *stats // a copy, because the caller encodes it outside the lock
 	}
-	return map[string]any{"rollout_id": m.rolloutID, "adapters": adapters}
+	return map[string]any{"rollout_id": m.rolloutID, "models": models}
 }
 
 func (m *metrics) guardFailures(stage string, failed []string) {
@@ -306,10 +306,10 @@ func (m *metrics) render() string {
 		stage, name, _ := strings.Cut(key, "\x00")
 		fmt.Fprintf(&b, "thaipoai_guard_failures_total{stage=%q,guard=%q} %d\n", stage, name, m.guards[key])
 	}
-	for name, stats := range m.adapters {
-		fmt.Fprintf(&b, "thaipoai_adapter_requests_total{adapter=%q} %d\n", name, stats.Requests)
-		fmt.Fprintf(&b, "thaipoai_adapter_guard_failures_total{adapter=%q} %d\n", name, stats.GuardFailures)
-		fmt.Fprintf(&b, "thaipoai_adapter_infra_errors_total{adapter=%q} %d\n", name, stats.InfraErrors)
+	for name, stats := range m.models {
+		fmt.Fprintf(&b, "thaipoai_model_requests_total{model=%q} %d\n", name, stats.Requests)
+		fmt.Fprintf(&b, "thaipoai_model_guard_failures_total{model=%q} %d\n", name, stats.GuardFailures)
+		fmt.Fprintf(&b, "thaipoai_model_infra_errors_total{model=%q} %d\n", name, stats.InfraErrors)
 	}
 	fmt.Fprintf(&b, "thaipoai_request_duration_milliseconds_sum %d\n", m.millis)
 	fmt.Fprintf(&b, "thaipoai_request_duration_milliseconds_count %d\n", total)
@@ -357,8 +357,8 @@ func (s *server) followRouting(file string) {
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8088", "address to serve on")
 	backend := flag.String("backend", "http://127.0.0.1:8766", "OpenAI-compatible model server")
-	model := flag.String("model", "gemma4e4b", "model name used until a routing file exists")
-	routingFile := flag.String("routing", "", "file naming the stable and candidate adapters")
+	model := flag.String("model", "base", "model name used until a routing file exists")
+	routingFile := flag.String("routing", "", "file naming the stable and candidate models")
 	timeout := flag.Duration("timeout", 60*time.Second, "time allowed for one translation")
 	flag.Parse()
 	httpClient := &http.Client{Timeout: 2 * *timeout}

@@ -23,7 +23,7 @@ var (
 	englishPM   = regexp.MustCompile(`(?i)\b(\d{1,2})(?::\d{2})?\s*p\.?m\b`)
 	commentary  = regexp.MustCompile(`(?i)^\s*(here is|here's|translation:|the translation|sure[,!]|note:|คำแปล|แปลว่า)`)
 	refusal     = regexp.MustCompile(`(?i)as an ai\b|(cannot|can't|unable to) translate`)
-	markup      = regexp.MustCompile("(?i)</?think|<\\|im_|<turn\\||<\\|turn|#src_text|#guidelines|```|earlier messages in this chat")
+	markup      = regexp.MustCompile("(?i)</?think|<\\|im_|```|earlier messages in this chat")
 	hedge       = regexp.MustCompile(`ครับ\s*/\s*ค[่ะ]+|ค[่ะ]+\s*/\s*ครับ|ผม\s*/\s*(ดิฉัน|ฉัน)|(ดิฉัน|ฉัน)\s*/\s*ผม`)
 	englishNot  = regexp.MustCompile(`(?i)\b(not|never|no|without|cannot)\b|n't\b`)
 	thaiNot     = regexp.MustCompile(`ไม่|อย่า|ห้าม|มิได้|ไร้|ปราศจาก|เปล่า`)
@@ -106,7 +106,7 @@ func negationLost(source, output string, targetThai bool) bool {
 // soft guards are reported but never act, because they wrongly flag too many good translations.
 var soft = map[string]bool{"negation": true}
 
-// Hard keeps the failures that should cause a repair or count against an adapter.
+// Hard keeps the failures that should cause a repair or count against a model.
 func Hard(failed []string) []string {
 	var out []string
 	for _, name := range failed {

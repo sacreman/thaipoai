@@ -1,4 +1,4 @@
-// Package rollout holds the decisions of an adapter rollout as pure functions: which phase comes
+// Package rollout holds the decisions of a model rollout as pure functions: which phase comes
 // next, what each phase should have deployed, and whether a gate has passed. Everything that
 // touches the network lives in cmd/rollout-controller. See docs/rollout-states.md.
 package rollout
@@ -42,7 +42,6 @@ type edge struct {
 // is how an infrastructure fault is kept from ever becoming a rollback.
 var transitions = map[edge]Phase{
 	{Verifying, Advance}: Golden,
-	{Verifying, Block}:   Blocked,
 	{Verifying, GiveUp}:  Inconclusive,
 	{Golden, Advance}:    Shadow,
 	{Golden, Block}:      Blocked,
@@ -63,21 +62,20 @@ func Next(p Phase, d Decision) Phase {
 	return p
 }
 
-// Adapter identifies one exact set of weights.
-type Adapter struct {
+// Model identifies one exact set of weights.
+type Model struct {
 	Name   string `json:"name"`
-	URL    string `json:"url"`
 	SHA256 string `json:"sha256"`
 }
 
-// Registered is the name the model server knows these weights by. It matches adapter-sync.
-func (a Adapter) Registered() string { return a.Name + "-" + a.SHA256[:12] }
+// Registered is the name the model server knows these weights by. The digest in it means a
+// replica that serves this name holds these weights.
+func (a Model) Registered() string { return a.Name + "-" + a.SHA256[:12] }
 
-// Desired is one entry in the list adapter-sync reads.
+// Desired is one entry in the published list of what should be served.
 type Desired struct {
-	Adapter
+	Model
 	Required bool `json:"required"`
-	Attempt  int  `json:"attempt"`
 }
 
 // Routing is what the gateway reads. The gateway keeps the last one it read, so traffic holds
@@ -92,10 +90,9 @@ type Routing struct {
 // PlanInput is the durable state a plan is derived from.
 type PlanInput struct {
 	Phase     Phase
-	Stable    *Adapter
-	Previous  *Adapter // the last stable, kept until the next rollout starts
-	Candidate Adapter
-	Attempt   int
+	Stable    *Model
+	Previous  *Model // the last stable, kept until the next rollout starts
+	Candidate Model
 	Percent   int
 	Base      string
 	ID        string
@@ -112,16 +109,16 @@ func Plan(in PlanInput) ([]Desired, Routing) {
 	desired := []Desired{}
 	routing := Routing{Stable: in.Base}
 	if in.Stable != nil {
-		desired = append(desired, Desired{Adapter: *in.Stable, Required: true})
+		desired = append(desired, Desired{Model: *in.Stable, Required: true})
 		routing.Stable = in.Stable.Registered()
 	}
 	if in.Previous != nil {
-		desired = append(desired, Desired{Adapter: *in.Previous})
+		desired = append(desired, Desired{Model: *in.Previous})
 	}
 	if Terminal(in.Phase) {
 		return desired, routing
 	}
-	desired = append(desired, Desired{Adapter: in.Candidate, Attempt: in.Attempt})
+	desired = append(desired, Desired{Model: in.Candidate})
 	if in.Phase == Canary {
 		routing.ID, routing.Candidate, routing.CandidatePercent = in.ID, in.Candidate.Registered(), in.Percent
 	}

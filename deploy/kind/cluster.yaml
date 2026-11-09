@@ -6,9 +6,3 @@ kubeadmConfigPatches:
     syncFrequency: 5s
 nodes:
   - role: control-plane
-    extraMounts:
-      - hostPath: __STATE__/adapters
-        containerPath: /state/adapters
-      - hostPath: __STATE__/store
-        containerPath: /state/store
-        readOnly: true

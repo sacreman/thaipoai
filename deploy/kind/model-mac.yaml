@@ -1,5 +1,5 @@
 # One replica whose real model runs on the Mac, because MPS is not available in a container. The
-# "model" container is a port forward to it. On real GPUs it is vLLM, and nothing else changes.
+# "model" container is a port forward to it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,17 +15,3 @@ spec:
           image: alpine/socat:1.8.0.3
           args: ["TCP-LISTEN:8000,fork,reuseaddr", "TCP:host.docker.internal:8766"]
           ports: [{containerPort: 8000}]
-        - name: adapter-sync
-          image: thaipoai/adapter-sync:dev
-          imagePullPolicy: Never
-          args: ["--dir=/adapters", "--server-dir=__STATE__/adapters", "--backend=http://127.0.0.1:8000", "--interval=3s", "--retry=15s"]
-          securityContext: {runAsUser: 0} # the kind host mount is owned by root
-          ports: [{containerPort: 8090, name: state}]
-          livenessProbe: {httpGet: {path: /healthz, port: state}}
-          readinessProbe: {httpGet: {path: /readyz, port: state}, periodSeconds: 2}
-          volumeMounts:
-            - {name: adapters, mountPath: /adapters}
-            - {name: desired, mountPath: /etc/adapter-sync}
-      volumes:
-        - {name: adapters, hostPath: {path: /state/adapters}}
-        - {name: desired, configMap: {name: rollout-translate, optional: true}}

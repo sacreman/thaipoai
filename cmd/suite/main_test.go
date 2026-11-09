@@ -12,69 +12,10 @@ import (
 	"time"
 )
 
-func TestPromptMatchesTheTrainingFormat(t *testing.T) {
-	got := lumenPrompt("Thai", "hello", []string{"A: hi", "B: yes"})
-	want := "Please translate the following text into Thai.\n#guidelines\nUse this conversation only as context and do not translate it:\nA: hi\nB: yes\n#src_text\nhello"
-	if got != want {
-		t.Fatalf("got %q", got)
-	}
-	if got := lumenPrompt("English", "x", nil); got != "Please translate the following text into English.\n#guidelines\n\n#src_text\nx" {
-		t.Fatalf("no context: got %q", got)
-	}
-}
-
-func TestFormatsPutHistoryInTheRightPlace(t *testing.T) {
-	history := []string{"A: hi"}
-	cases := map[string]func(m []map[string]string) bool{
-		"guidelines": func(m []map[string]string) bool {
-			return len(m) == 1 && strings.Contains(m[0]["content"], "#guidelines\nUse this conversation")
-		},
-		"reference": func(m []map[string]string) bool {
-			return len(m) == 1 && strings.Contains(m[0]["content"], "Earlier messages:\nA: hi\n#src_text\nhello")
-		},
-		"system": func(m []map[string]string) bool {
-			return len(m) == 2 && m[0]["role"] == "system" && strings.Contains(m[0]["content"], "A: hi") && !strings.Contains(m[1]["content"], "A: hi")
-		},
-		"before": func(m []map[string]string) bool {
-			return len(m) == 1 && strings.HasPrefix(m[0]["content"], "Earlier messages") && strings.HasSuffix(m[0]["content"], "#src_text\nhello")
-		},
-	}
-	for format, ok := range cases {
-		got, err := messagesFor(format, "Thai", "hello", history)
-		if err != nil || !ok(got) {
-			t.Fatalf("%s: %v %v", format, got, err)
-		}
-		plain, err := messagesFor(format, "Thai", "hello", nil)
-		if err != nil || len(plain) != 1 || plain[0]["content"] != lumenPrompt("Thai", "hello", nil) {
-			t.Fatalf("%s without history: %v %v", format, plain, err)
-		}
-	}
-	if _, err := messagesFor("bad", "Thai", "x", history); err == nil {
+func TestAnUnknownFormatIsRefused(t *testing.T) {
+	if _, err := messagesFor("bad", "Thai", "x", nil); err == nil {
 		t.Fatal("unknown format accepted")
 	}
-}
-
-func TestEachModelGetsItsDocumentedPrompt(t *testing.T) {
-	history := []string{"A: hi"}
-	check := func(format, want string, withHistory bool) {
-		t.Helper()
-		var context []string
-		if withHistory {
-			context = history
-		}
-		got, err := messagesFor(format, "Thai", "hello", context)
-		if err != nil || len(got) != 1 || !strings.Contains(got[0]["content"], want) {
-			t.Fatalf("%s: %v %v", format, got, err)
-		}
-	}
-	check("hy", "Note that you should only output", false)
-	check("hy", "[Background Information]\nA: hi", true)
-	check("qingqiu", "English text into Thai", false)
-	check("qingqiu", "do not translate it:\nA: hi\n\ntext:\nhello", true)
-	check("index", "翻译为泰语", false)
-	check("index", "【源文】\nhello", true)
-	check("chinda", "Translate English to Thai.\n\nEN: hello", false)
-	check("chinda", "Never translate them:\nA: hi\n\nEN: hello", true)
 }
 
 func TestVariantsChooseTheContext(t *testing.T) {
@@ -107,7 +48,7 @@ func run(t *testing.T, handler http.HandlerFunc, suite string, variant string) [
 	t.Helper()
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	cfg := config{endpoint: server.URL, model: "m", system: "s", variant: variant, format: "guidelines", client: &http.Client{Timeout: 5 * time.Second}}
+	cfg := config{endpoint: server.URL, model: "m", system: "s", variant: variant, format: "chat", client: &http.Client{Timeout: 5 * time.Second}}
 	var out bytes.Buffer
 	if _, err := runSuite(cfg, strings.NewReader(suite), &out); err != nil {
 		t.Fatal(err)
@@ -124,25 +65,8 @@ func run(t *testing.T, handler http.HandlerFunc, suite string, variant string) [
 	return results
 }
 
-func TestNotesReachTheChatSystemPrompt(t *testing.T) {
-	var body string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		body = string(raw)
-		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	defer server.Close()
-	cfg := config{endpoint: server.URL, model: "m", system: "s", variant: "none", format: "chat", client: server.Client()}
-	if got := cfg.run(Case{ID: "a", Direction: "en-th", Source: "hello", Notes: "NEAREST EXAMPLE"}); got.Error != "" {
-		t.Fatal(got.Error)
-	}
-	if !strings.Contains(body, "NEAREST EXAMPLE") {
-		t.Fatalf("notes missing from %s", body)
-	}
-}
-
 func TestSendsThePromptAndRecordsTheOutput(t *testing.T) {
-	var prompt string
+	var system, prompt string
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("path %s", r.URL.Path)
@@ -154,15 +78,15 @@ func TestSendsThePromptAndRecordsTheOutput(t *testing.T) {
 			} `json:"messages"`
 		}
 		json.Unmarshal(body, &request)
-		prompt = request.Messages[0].Content
+		system, prompt = request.Messages[0].Content, request.Messages[1].Content
 		w.Write([]byte(`{"choices":[{"message":{"content":" สวัสดี "}}]}`))
 	}
 	results := run(t, handler, `{"id":"a","direction":"en-th","category":"c","source":"hello","context":["A: hi"]}`+"\n", "correct")
 	if len(results) != 1 || results[0].Output != "สวัสดี" || results[0].Variant != "correct" {
 		t.Fatalf("got %+v", results)
 	}
-	if !strings.Contains(prompt, "A: hi") || !strings.HasSuffix(prompt, "#src_text\nhello") {
-		t.Fatalf("prompt %q", prompt)
+	if !strings.Contains(system, "A: hi") || !strings.HasSuffix(prompt, "hello") {
+		t.Fatalf("system %q prompt %q", system, prompt)
 	}
 }
 

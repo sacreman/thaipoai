@@ -3,24 +3,19 @@
 # any outcome is not the one the design promises.
 set -uo pipefail
 source deploy/kind/lib.sh
-mkdir -p "$state/fake"
-echo '{}' > "$state/fake/adapter_config.json"
 failures=0
 
 check() { # check <what> <expected> <actual>
   if [ "$2" = "$3" ]; then echo "PASS  $1: $3"; else echo "FAIL  $1: wanted '$2', got '$3' ($(field .status.reason))"; failures=$((failures + 1)); fi
 }
 
-archive() { # archive <name> prints sha256 of a unique fake adapter
-  echo "$1" > "$state/fake/adapter_model.safetensors"
-  pack "$state/fake" "$1"
-}
+digest() { printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1; } # a fake model's identity
 
 traffic() { k scale deployment/traffic --replicas="$1" >/dev/null; }
 routing() { k get configmap rollout-translate -o 'jsonpath={.data.routing\.json}'; }
 die() { echo "FAIL  $1"; exit 1; }
 start() {
-  sha=$(archive "$1")
+  sha=$(digest "$1")
   rollout "$1" "$sha" 50 150 || die "rollout $1 was refused"
   new_rollout_seen "$sha" || die "controller never picked up $1"
 }
@@ -38,7 +33,7 @@ gateway_candidate_requests() { # asks a running gateway directly, not the contro
   k port-forward deploy/gateway 18088:8088 >/dev/null 2>&1 &
   local forward=$!
   sleep 2
-  curl -s -m 5 localhost:18088/stats | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['adapters'].get('$1',{}).get('requests',0))"
+  curl -s -m 5 localhost:18088/stats | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['models'].get('$1',{}).get('requests',0))"
   kill $forward 2>/dev/null
   wait $forward 2>/dev/null
 }
@@ -56,7 +51,7 @@ k rollout status deployment/model --timeout=180s >/dev/null
 
 echo "--- two rollouts on one target, and controller killed mid-canary"
 start good2
-second=$(archive good3)
+second=$(digest good3)
 if rollout good3 "$second" 50 30 2>/tmp/thaipoai-second.$$; then
   check "second rollout refused by the API server" refused accepted
 else
@@ -98,38 +93,37 @@ outcome=$(finish)
 check "replica lost is never a rollback" Promoted "$outcome"
 k rollout status deployment/model --timeout=180s >/dev/null
 
-echo "--- adapter load fails on one replica of three"
+echo "--- candidate missing on one replica of three"
 victim=$(k get pods -l app=model -o 'jsonpath={.items[0].metadata.name}')
 k port-forward "pod/$victim" 18000:8000 >/dev/null 2>&1 &
 forward=$!
 sleep 2
-curl -s -m 5 -X POST 'localhost:18000/fault?fail_load=true' >/dev/null
+curl -s -m 5 -X POST 'localhost:18000/fault?hide=good5' >/dev/null
 stable_before=$(field .status.stable.name)
 start good5
-check "load failure on one replica" Inconclusive "$(finish)"
+check "candidate missing on one replica" Inconclusive "$(finish)"
 check "stable unchanged" "$stable_before" "$(field .status.stable.name)"
 sleep 2
 check "all replicas still serving" 3 "$(ready_replicas)"
-curl -s -m 5 -X POST 'localhost:18000/fault?fail_load=false' >/dev/null
+curl -s -m 5 -X POST 'localhost:18000/fault?hide=' >/dev/null
 kill $forward 2>/dev/null
 
-echo "--- checksum mismatch"
-archive corrupt >/dev/null
-sha=$(printf '0%.0s' $(seq 1 64))
-rollout corrupt "$sha" 50 30
-new_rollout_seen "$sha"
-check "checksum mismatch" Blocked "$(finish)"
-check "reason" "checksum mismatch" "$(field .status.reason)"
+echo "--- digest no replica holds"
+start corrupt
+check "digest no replica holds" Inconclusive "$(finish)"
+check "never reached golden" "" "$(field .status.golden.cases)"
+case "$(routing)" in *candidate*) check "no traffic to it" none present ;; *) check "no traffic to it" none none ;; esac
+check "stable unchanged" "$stable_before" "$(field .status.stable.name)"
 
 echo "--- demo: flipped gender particles"
 start flipped
-check "flipped adapter" Blocked "$(finish)"
+check "flipped model" Blocked "$(finish)"
 echo "      $(field .status.reason)"
 check "never reached shadow" "" "$(field .status.shadow.cases)"
 
 echo "--- demo: output bloat"
 start bloat
-check "bloat adapter" RolledBack "$(finish)"
+check "bloat model" RolledBack "$(finish)"
 echo "      $(field .status.reason)"
 sleep 2
 case "$(routing)" in *candidate*) check "traffic back on stable" none present ;; *) check "traffic back on stable" none none ;; esac
@@ -137,6 +131,6 @@ check "stable unchanged" "$stable_before" "$(field .status.stable.name)"
 
 traffic 0
 echo "--- history"
-k get adapterrollout translate
+k get modelrollout translate
 [ "$failures" -eq 0 ] && echo "fault matrix passed" || echo "fault matrix FAILED: $failures"
 exit "$failures"

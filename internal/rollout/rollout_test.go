@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-var candidate = Adapter{Name: "cand", URL: "http://x/c", SHA256: strings.Repeat("c", 64)}
-var stable = Adapter{Name: "stable", URL: "http://x/s", SHA256: strings.Repeat("a", 64)}
+var candidate = Model{Name: "cand", SHA256: strings.Repeat("c", 64)}
+var stable = Model{Name: "stable", SHA256: strings.Repeat("a", 64)}
 
 func TestAnInfrastructureFaultIsNeverARollback(t *testing.T) {
 	for _, phase := range []Phase{Verifying, Golden, Shadow, Canary} {
@@ -62,8 +62,8 @@ func TestWaitNeverMoves(t *testing.T) {
 	}
 }
 
-func plan(phase Phase, stable *Adapter) ([]Desired, Routing) {
-	return Plan(PlanInput{Phase: phase, Stable: stable, Candidate: candidate, Attempt: 2, Percent: 10, Base: "base", ID: "id"})
+func plan(phase Phase, stable *Model) ([]Desired, Routing) {
+	return Plan(PlanInput{Phase: phase, Stable: stable, Candidate: candidate, Percent: 10, Base: "base", ID: "id"})
 }
 
 func TestPlanBeforeCanarySendsNoTrafficToTheCandidate(t *testing.T) {
@@ -96,7 +96,7 @@ func TestPlanAfterAFailureReturnsToStableOnly(t *testing.T) {
 
 func TestPlanWithNoStableUsesTheBaseModel(t *testing.T) {
 	desired, routing := plan(Shadow, nil)
-	if len(desired) != 1 || desired[0].Required || desired[0].Attempt != 2 || routing.Stable != "base" {
+	if len(desired) != 1 || desired[0].Required || routing.Stable != "base" {
 		t.Fatalf("%+v %+v", desired, routing)
 	}
 }
@@ -141,24 +141,22 @@ func TestFisherP(t *testing.T) {
 
 func TestVerify(t *testing.T) {
 	const timeout = time.Minute
-	ok, bad := Replica{Ready: true}, Replica{Error: "/v1/load_lora_adapter: status 400"}
 	cases := []struct {
-		name     string
-		replicas []Replica
-		elapsed  time.Duration
-		want     Decision
+		name         string
+		ready, total int
+		elapsed      time.Duration
+		want         Decision
 	}{
-		{"all ready", []Replica{ok, ok, ok}, 0, Advance},
-		{"no replicas yet", nil, 0, Wait},
-		{"no replicas ever", nil, 2 * timeout, GiveUp},
-		{"one failing, still time", []Replica{ok, ok, bad}, 0, Wait},
-		{"one failing, out of time", []Replica{ok, ok, bad}, 2 * timeout, GiveUp},
-		{"checksum on every replica blocks", []Replica{{Error: "checksum mismatch"}, {Error: "checksum mismatch"}}, 0, Block},
-		{"checksum on one replica waits", []Replica{ok, {Error: "checksum mismatch"}}, 0, Wait},
-		{"checksum on one replica gives up", []Replica{ok, {Error: "checksum mismatch"}}, 2 * timeout, GiveUp},
+		{"all serving", 3, 3, 0, Advance},
+		{"no replicas yet", 0, 0, 0, Wait},
+		{"no replicas ever", 0, 0, 2 * timeout, GiveUp},
+		{"one missing, still time", 2, 3, 0, Wait},
+		{"one missing, out of time", 2, 3, 2 * timeout, GiveUp},
+		{"none serving, still time", 0, 3, 0, Wait},
+		{"none serving, out of time", 0, 3, 2 * timeout, GiveUp},
 	}
 	for _, c := range cases {
-		if got, _ := EvaluateVerify(c.replicas, c.elapsed, timeout); got != c.want {
+		if got, _ := EvaluateVerify(c.ready, c.total, c.elapsed, timeout); got != c.want {
 			t.Fatalf("%s: got %d", c.name, got)
 		}
 	}

@@ -76,7 +76,7 @@ def main():
     parser.add_argument("--out", default="suites/dev.jsonl")
     args = parser.parse_args()
     excluded = {c["source"] for path in Path("suites").glob("*.jsonl") if path.name != Path(args.out).name for c in load(path)}
-    for path in Path("runs/synth-chat").glob("*.jsonl"):
+    for path in Path("data/synthetic-chat-v1").glob("*.jsonl"):
         excluded |= {c["source"] for c in load(path)}
     jobs = [(args.model, d, c, args.per_category, excluded) for d in ("en-th", "th-en") for c in CATEGORIES]
     with ThreadPoolExecutor(6) as pool:

@@ -1,5 +1,5 @@
-// Command fake-model behaves like vLLM with deterministic output, so a multi-replica rollout can
-// be tested without a GPU. An adapter's name decides how it behaves.
+// Command fake-model behaves like an OpenAI-style model server with deterministic output, so a
+// multi-replica rollout can be tested without a real model. A model's name decides how it behaves.
 package main
 
 import (
@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -16,10 +15,20 @@ import (
 var digits = regexp.MustCompile(`\d+`)
 
 type server struct {
-	base     string
-	mu       sync.Mutex
-	adapters map[string]bool
-	failLoad bool
+	base   string
+	mu     sync.Mutex
+	hidden string // this replica does not serve models whose names start with this
+}
+
+// serves is true for any name, because here a model is only a name. "corrupt" stands for a
+// digest no replica holds, and the hide fault stands for a replica that lacks a model.
+func (s *server) serves(model string) bool {
+	if model == s.base {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !strings.HasPrefix(model, "corrupt") && (s.hidden == "" || !strings.HasPrefix(model, s.hidden))
 }
 
 func particle(system, model string) string {
@@ -55,45 +64,13 @@ func (s *server) reply(w http.ResponseWriter, code int, body any) {
 	json.NewEncoder(w).Encode(body)
 }
 
-func (s *server) models(w http.ResponseWriter, _ *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data := []map[string]any{{"id": s.base, "parent": nil}}
-	names := make([]string, 0, len(s.adapters))
-	for name := range s.adapters {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		data = append(data, map[string]any{"id": name, "parent": s.base})
-	}
-	s.reply(w, http.StatusOK, map[string]any{"data": data})
-}
-
-func (s *server) load(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"lora_name"`
-	}
-	json.NewDecoder(r.Body).Decode(&body)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.failLoad {
-		s.reply(w, http.StatusBadRequest, map[string]string{"error": "injected load failure"})
+func (s *server) model(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.serves(id) {
+		s.reply(w, http.StatusNotFound, map[string]string{"error": "unknown model"})
 		return
 	}
-	s.adapters[body.Name] = true
-	s.reply(w, http.StatusOK, map[string]string{"status": "loaded"})
-}
-
-func (s *server) unload(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"lora_name"`
-	}
-	json.NewDecoder(r.Body).Decode(&body)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.adapters, body.Name)
-	s.reply(w, http.StatusOK, map[string]string{"status": "unloaded"})
+	s.reply(w, http.StatusOK, map[string]string{"id": id, "object": "model"})
 }
 
 func (s *server) chat(w http.ResponseWriter, r *http.Request) {
@@ -102,10 +79,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		Messages []map[string]string `json:"messages"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-	s.mu.Lock()
-	known := body.Model == s.base || s.adapters[body.Model]
-	s.mu.Unlock()
-	if !known {
+	if !s.serves(body.Model) {
 		s.reply(w, http.StatusNotFound, map[string]string{"error": "unknown model"})
 		return
 	}
@@ -123,26 +97,24 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	s.reply(w, http.StatusOK, map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": translate(system, user, body.Model)}}}})
 }
 
-// fault turns injected load failures on or off for this replica.
+// fault makes this replica lack models whose names start with hide. An empty value clears it.
 func (s *server) fault(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.failLoad = r.URL.Query().Get("fail_load") == "true"
-	s.reply(w, http.StatusOK, map[string]bool{"fail_load": s.failLoad})
+	s.hidden = r.URL.Query().Get("hide")
+	s.reply(w, http.StatusOK, map[string]string{"hide": s.hidden})
 }
 
 func main() {
 	listen := flag.String("listen", ":8000", "address to serve on")
 	base := flag.String("base", "base", "base model name")
 	flag.Parse()
-	s := &server{base: *base, adapters: map[string]bool{}}
+	s := &server{base: *base}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		s.reply(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("/v1/models", s.models)
-	mux.HandleFunc("/v1/load_lora_adapter", s.load)
-	mux.HandleFunc("/v1/unload_lora_adapter", s.unload)
+	mux.HandleFunc("GET /v1/models/{id}", s.model)
 	mux.HandleFunc("/v1/chat/completions", s.chat)
 	mux.HandleFunc("/fault", s.fault)
 	log.Fatal(http.ListenAndServe(*listen, mux))
