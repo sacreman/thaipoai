@@ -5,7 +5,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from math import comb, sqrt
 
-from train.score import load, score_jev
+from evaluation.judge import load, score_jev
 
 
 def one_sided(hits, misses):

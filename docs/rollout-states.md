@@ -71,9 +71,9 @@ and so is one whose candidate-only error share is above 5% when it would otherwi
 
 ## Limits
 
-- Guards see format and a narrow set of factual slips. The gates
-  catch what guards can see, and they are not a judgment of translation quality. That is the
-  frozen benchmark's job, before a rollout begins.
+- Guards see format and a narrow set of factual slips. The gates catch what guards can see, and
+  they are not a judgment of translation quality. That is the job of the evaluation in SPEC
+  section 5, before a rollout begins.
 - The gateway reads routing from a mounted ConfigMap, so a change can take up to a minute to
   arrive. A rollback is not instant.
 - Deleting a `ModelRollout` ends any canary through a finalizer and returns traffic to stable.

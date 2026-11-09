@@ -1,7 +1,7 @@
-"""Build the public English-Thai training set allowed by section 4.7 of the spec.
+"""Build English-Thai training rows from public corpora.
 
-ALT (CC BY 4.0), TALPCo (CC BY 4.0) and Tatoeba (per sentence, default CC BY 2.0 FR). The Common
-Voice pairs are left out until a CC0 file is confirmed. Writes to data/public, which is gitignored,
+ALT (CC BY 4.0), TALPCo (CC BY 4.0) and Tatoeba (per sentence, default CC BY 2.0 FR).
+Writes to data/public, which is gitignored,
 and records every Tatoeba author so they can be credited in the model card.
 """
 

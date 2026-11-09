@@ -298,8 +298,8 @@ func clopperPearson(k, n int, alpha float64) (float64, float64) {
 	return lower, upper
 }
 
-// prompts asks for what follows a key in four ways: the exact prompt the model was trained on
-// and a plain continuation, each in both languages. The exact prompt is the strongest key.
+// prompts asks for what follows a key in four ways: the translation prompt and a plain
+// continuation, each in both languages.
 func prompts(english, thai string) [][]llm.Message {
 	const continuation = "Continue this text exactly. Output only the continuation.\n\n"
 	return [][]llm.Message{
@@ -545,7 +545,6 @@ func runProbe(args []string, stdout, stderr io.Writer) int {
 	model := flags.String("model", "", "name of the model under test")
 	threshold := flags.Float64("threshold", 0, "highest recall allowed in any frequency; 0 means one recalled canary blocks")
 	keyFile := flags.String("api-key-file", "", "file holding the API key, never printed")
-	noThinking := flags.Bool("no-thinking", false, "turn off reasoning")
 	if flags.Parse(args) != nil {
 		return exitInconclusive
 	}
@@ -558,7 +557,7 @@ func runProbe(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "probe: %v\n", err)
 		return exitInconclusive
 	}
-	client := llm.Client{Endpoint: strings.TrimRight(*endpoint, "/"), Model: *model, NoThinking: *noThinking, HTTP: &http.Client{Timeout: 5 * time.Minute}}
+	client := llm.Client{Endpoint: strings.TrimRight(*endpoint, "/"), Model: *model, HTTP: &http.Client{Timeout: 5 * time.Minute}}
 	if *keyFile != "" {
 		key, err := os.ReadFile(*keyFile)
 		if err != nil {
@@ -567,7 +566,7 @@ func runProbe(args []string, stdout, stderr io.Writer) int {
 		}
 		client.APIKey = strings.TrimSpace(string(key))
 	}
-	// ponytail: greedy and one failed request ends the run, sampled attacks and retries if a run needs them
+	// Known limit: requests are greedy and one failure ends the run. Sampled attacks or retries would be new work.
 	return probe(context.Background(), m, client, *threshold, stdout)
 }
 

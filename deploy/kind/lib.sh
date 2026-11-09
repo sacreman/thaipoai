@@ -1,7 +1,7 @@
 # Helpers for driving rollouts on kind. Source this file.
 k() { kubectl --context kind-thaipoai "$@"; }
 
-# rollout <name> <sha256> <percent> <samples> [timeout minutes] [attempt]
+# rollout <name> <sha256> <percent> <samples>
 rollout_yaml() {
   cat <<YAML
 apiVersion: thaipoai.dev/v1alpha1
@@ -9,8 +9,7 @@ kind: ModelRollout
 metadata: {name: translate}
 spec:
   model: {name: $1, sha256: "$2"}
-  attempt: ${6:-0}
-  canary: {percent: $3, minSamples: $4, timeoutMinutes: ${5:-5}}
+  canary: {percent: $3, minSamples: $4, timeoutMinutes: 5}
 YAML
 }
 rollout() { rollout_yaml "$@" | k apply -f - >/dev/null; }

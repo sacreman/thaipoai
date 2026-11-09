@@ -70,7 +70,7 @@ type Model struct {
 
 // Registered is the name the model server knows these weights by. The digest in it means a
 // replica that serves this name holds these weights.
-func (a Model) Registered() string { return a.Name + "-" + a.SHA256[:12] }
+func (m Model) Registered() string { return m.Name + "-" + m.SHA256[:12] }
 
 // Desired is one entry in the published list of what should be served.
 type Desired struct {
@@ -101,7 +101,7 @@ type PlanInput struct {
 // Plan derives what should be deployed from the durable status alone. The controller reapplies
 // it on every reconcile, so a crash between writing status and applying it cannot lose anything.
 //
-// The previous stable stays loaded after a promotion. Replicas and gateways pick up changes at
+// The previous stable stays in the list after a promotion. Replicas and gateways pick up changes at
 // different moments, and a gateway still sending traffic to it must not find it gone.
 //
 // Routing carries the rollout's ID only during Canary, so each canary counts from zero.

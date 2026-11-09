@@ -101,7 +101,7 @@ func TestPlanWithNoStableUsesTheBaseModel(t *testing.T) {
 	}
 }
 
-func TestAPromotionKeepsThePreviousStableLoaded(t *testing.T) {
+func TestAPromotionKeepsThePreviousStableInTheList(t *testing.T) {
 	previous := stable
 	desired, routing := Plan(PlanInput{Phase: Promoted, Stable: &candidate, Previous: &previous, Base: "base"})
 	if len(desired) != 2 || !desired[0].Required || desired[1].Name != "stable" || desired[1].Required {

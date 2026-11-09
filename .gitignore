@@ -1,22 +1,24 @@
-.private/
-.venv/
-__pycache__/
-.pytest_cache/
-data/private/
-runs/
-adapters/
-research_notes/
-reports/Open Thai translation base models.md
-reports/Running Lumen on a laptop.md
-models/
+# Secrets
 .env
 .env.*
 *.key
 *_key
 *.pem
+
+# Data that is never published
+data/private/
+.private/
+
+# Downloaded or generated
+data/public/
+models/
+runs/
+reports/
+research_notes/
+
+# Tooling
+.venv/
+__pycache__/
+.pytest_cache/
 .claude/
 .DS_Store
-reports/Translation models to build on.md
-data/public/
-.terraform/
-*.tfstate*

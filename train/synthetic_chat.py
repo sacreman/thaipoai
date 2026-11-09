@@ -7,12 +7,14 @@ Prints counts, never text. The DeepSeek key is read by draft_suite and never pri
 import argparse
 import json
 import random
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from train.draft_suite import CATEGORIES, THAI, call
-from train.score import load, score_jev
+from evaluation.draft_suite import CATEGORIES, THAI, call
+from evaluation.judge import load, score_jev
 
+SPEAKER = re.compile(r"^[AB]: ")
 TOPICS = [
     "a late bus", "cooking dinner", "a sick parent", "a broken phone", "a birthday party", "rent",
     "a job interview", "a football match", "a beach trip", "school fees", "a new haircut",
@@ -73,7 +75,7 @@ def carries_meaning(case):
 
 def row_of(case):
     english_target = case["direction"] == "th-en"
-    return {"source": case["source"], "target": case["translation"], "context": case["context"],
+    return {"source": SPEAKER.sub("", case["source"]), "target": case["translation"], "context": case["context"],
             "target_lang": "English" if english_target else "Thai",
             "direction": case["direction"], "category": case["category"]}
 
@@ -84,7 +86,7 @@ def main():
     parser.add_argument("--batches", type=int, default=20, help="batches per direction and category")
     parser.add_argument("--per-batch", type=int, default=12)
     parser.add_argument("--workers", type=int, default=16)
-    parser.add_argument("--out", default="runs/synth-chat")
+    parser.add_argument("--out", default="data/synthetic-chat-v1")
     args = parser.parse_args()
     seen = {c["source"] for path in Path("suites").glob("*.jsonl") for c in load(path)}
     jobs = [(args.model, d, c, args.per_batch, f"{d}{c}{i}")

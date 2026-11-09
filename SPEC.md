@@ -109,7 +109,7 @@ estimates. Quality here comes from method descriptions, and step 5 audits sample
 |---|---:|---|---|
 | SCB human and crowd (dialogs, reviews, SMS, voice) | 468,568 | CC BY-SA | Backbone. Oversample dialogs |
 | ALT, TALPCo, Tatoeba (held locally) | 26,157 | CC BY, per sentence | Keep, oversample |
-| Synthetic chat (`data/synthetic-chat-v1`) | 3,870 | Own, drafted by DeepSeek | Keep. Strip `B: ` speaker prefixes |
+| Synthetic chat (`data/synthetic-chat-v1`) | 3,870 | Own, drafted by DeepSeek | Keep |
 | HPLT v2 | about 2.0M* of 4.09M | CC0 packaging per paper | Volume, after confirming the licence |
 | SCB auto-aligned | about 250k | CC BY-SA | Possible Thai-origin source |
 | Wikimedia | about 50k* | Not verified | Minor, after confirming the licence |
@@ -153,13 +153,18 @@ Build the evaluation sets first, and keep them out of training.
 
 | Set | Use |
 |---|---|
-| `suites/dev`, `dev2`, `confirm` | Synthetic. No overlap with public training data. `pilot` and `golden` have a few overlapping sources, so they are not held-out |
+| `suites/dev`, `dev2`, `confirm` | Held-out final tests. Synthetic |
+| `suites/pilot` | Checkpoint tracking during training |
+| `suites/golden` | Must-pass cases for the rollout gate |
 | FLORES+ | Public benchmark |
 | Commissioned Thai-written chat | Held-out conversational test (section 4.2) |
 | App conversations | Held-out real-chat test, once section 4.4 is met |
 
+Training data never contains a suite message: every row whose normalised source appears in any
+suite is dropped when the corpus is built. A few short public sentences match today.
+
 **Baseline.** The existing DeepSeek system with its glossary and available context. Both systems
-receive equivalent relevant information. `train/run_deepseek.sh` is only a stand-in, with no
+receive equivalent relevant information. `evaluation/run_baseline.sh` is only a stand-in, with no
 glossary, and step 7 needs the real one.
 
 **Report per direction, never pooled alone:** meaning preservation, omissions, invented content,
@@ -170,7 +175,7 @@ training time and operating cost.
 **Scoring.**
 - Blind bilingual human review.
 - chrF as the repeatable automatic metric.
-- Jev's three-vote majority for meaning (`train/compare_systems.py`), paired on discordant cases
+- Jev's three-vote majority for meaning (`evaluation/compare_systems.py`), paired on discordant cases
   with a one-sided 95% upper bound.
 
 A gap of 1.5 points or less is reported as within reach of production. It is a reference, not a
@@ -205,7 +210,8 @@ Go serves whatever model passes evaluation. It is independent of how the model w
 - **`cmd/rollout-controller`**: `ModelRollout` resource: verify, golden suite, paired shadow, canary,
   then promoted or rolled back. Infrastructure faults end in `Inconclusive`, never a rollback.
   States and statistics are in `docs/rollout-states.md`.
-- **`cmd/suite`**, **`cmd/dataset-projector`**, **`cmd/extract-audit`** (`docs/extract-audit.md`).
+- **`cmd/suite`** runs a suite against an endpoint. **`cmd/extract-audit`** is the release gate for
+  memorised personal details (`docs/extract-audit.md`).
 - **kind** runs the stack with a fake model in CI, including the fault matrix.
 
 **Known mismatch.** The gateway's repair turn and `ChatMessages` assume a model that follows English
@@ -236,9 +242,9 @@ without human review.
 ## 9. Layout
 
 ```
-cmd/{gateway,rollout-controller,fake-model,suite,dataset-projector,extract-audit}
+cmd/{gateway,rollout-controller,fake-model,suite,extract-audit}
 internal/{guards,llm,rollout}  deploy/{crd.yaml,Dockerfile,kind}
-train/  suites/  data/synthetic-chat-v1/  tests/
+train/  evaluation/  suites/  data/synthetic-chat-v1/  tests/
 docs/{pretrained-experiments.md,data-sources.md,rollout-states.md,extract-audit.md,steps/}
 ```
 

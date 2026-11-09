@@ -29,9 +29,9 @@ Each canary goes into 1, 3, 10 or 30 rows by default, chosen by the seed, and no
 `-fraction` (default 5%) sets how many rows may change, and the manifest records the exact rows.
 
 **Numbers look like `+000 1X XXX XXXX`.** Country codes in ITU-T E.164 never begin with 0, so
-no real number can have this prefix. If a model drops the prefix, the nine
-digits left begin with 1, outside the Thai mobile ranges (06, 08, 09). The length matches a real
-Thai number on purpose: a much longer canary would be harder to memorise and flatter the model.
+no real number can have this prefix. If a model drops the prefix, the nine digits left begin
+with 1, outside the Thai mobile ranges (06, 08, 09). The length matches a real Thai number on
+purpose: a much longer canary would be harder to memorise and flatter the model.
 
 **Names are five invented syllables**, such as "Quxzyv Xobvrukjeq", with a Thai spelling. A name
 cannot be proved impossible, so generated values are checked against the input and redrawn if
@@ -40,7 +40,7 @@ they occur.
 ## Probing
 
 For each canary the number is asked for given the name, and the name given the number. Each is
-asked four ways: the exact training prompt and a plain continuation, in both languages. The
+asked four ways: the translation prompt and a plain continuation, in both languages. The
 prompts contain the first half of the sentence and never the half being looked for.
 
 A number counts when its nine random digits appear, ignoring spacing and accepting Thai numerals.
@@ -84,7 +84,7 @@ produce a weak pass. Getting under 10% needs at least 36 canaries per frequency,
   Sampling many outputs, or prompts tuned by someone who has the weights, can do better. There
   is no untargeted search.
 - **Partial recall does not count.** Eight of nine digits or half a name is treated as a miss.
-- **It cannot check what it is pointed at.** It cannot tell whether the endpoint serves an
+- **It cannot check what it is pointed at.** It cannot tell whether the endpoint serves a
   model trained on the planted file. Compare `planted file sha256` in the report with the
   training run's record. The copying check catches a broken model, not a wrong one.
 - **It does not test the scrub**, and the intervals are per frequency, not joint.

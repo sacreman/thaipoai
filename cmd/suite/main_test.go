@@ -12,12 +12,6 @@ import (
 	"time"
 )
 
-func TestAnUnknownFormatIsRefused(t *testing.T) {
-	if _, err := messagesFor("bad", "Thai", "x", nil); err == nil {
-		t.Fatal("unknown format accepted")
-	}
-}
-
 func TestVariantsChooseTheContext(t *testing.T) {
 	c := Case{Context: []string{"real"}, IrrelevantContext: []string{"other"}}
 	for variant, want := range map[string][]string{"none": nil, "correct": {"real"}, "irrelevant": {"other"}} {
@@ -48,7 +42,7 @@ func run(t *testing.T, handler http.HandlerFunc, suite string, variant string) [
 	t.Helper()
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	cfg := config{endpoint: server.URL, model: "m", system: "s", variant: variant, format: "chat", client: &http.Client{Timeout: 5 * time.Second}}
+	cfg := config{endpoint: server.URL, model: "m", system: "s", variant: variant, client: &http.Client{Timeout: 5 * time.Second}}
 	var out bytes.Buffer
 	if _, err := runSuite(cfg, strings.NewReader(suite), &out); err != nil {
 		t.Fatal(err)
@@ -100,7 +94,7 @@ func TestDeepSeekModeSendsAuthAndTurnsThinkingOff(t *testing.T) {
 		w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`))
 	}))
 	defer server.Close()
-	cfg := config{endpoint: server.URL, model: "m", system: "s", variant: "correct", format: "chat", apiKey: "k",
+	cfg := config{endpoint: server.URL, model: "m", system: "s", variant: "correct", apiKey: "k",
 		temperature: 0.7, noThinking: true, client: &http.Client{Timeout: 5 * time.Second}}
 	result := cfg.run(Case{ID: "a", Direction: "en-th", Source: "hello", Context: []string{"A: hi"}})
 	if result.Error != "" || auth != "Bearer k" || request["temperature"] != 0.7 || request["reasoning_effort"] != "none" {

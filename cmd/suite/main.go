@@ -37,7 +37,6 @@ type Result struct {
 	ID        string   `json:"id"`
 	System    string   `json:"system"`
 	Variant   string   `json:"variant"`
-	Format    string   `json:"format,omitempty"`
 	Direction string   `json:"direction"`
 	Category  string   `json:"category"`
 	Output    string   `json:"output"`
@@ -47,8 +46,7 @@ type Result struct {
 }
 
 type config struct {
-	endpoint, model, system, variant, format string
-	apiKey                                   string
+	endpoint, model, system, variant, apiKey string
 	temperature                              float64
 	noThinking                               bool
 	client                                   *http.Client
@@ -76,14 +74,6 @@ func contextFor(c Case, variant string) ([]string, error) {
 	return nil, fmt.Errorf("unknown variant %q", variant)
 }
 
-// messagesFor renders a case. chat is the only format.
-func messagesFor(format, target, source string, context []string) ([]map[string]string, error) {
-	if format != "chat" {
-		return nil, fmt.Errorf("unknown format %q", format)
-	}
-	return llm.ChatMessages(target, source, context, ""), nil
-}
-
 // checks are the deterministic failures. Meaning itself is left to the scorers.
 func checks(c Case, output string) []string {
 	var failures []string
@@ -102,7 +92,7 @@ func (cfg config) translate(messages []map[string]string) (string, error) {
 }
 
 func (cfg config) run(c Case) Result {
-	result := Result{ID: c.ID, System: cfg.system, Variant: cfg.variant, Format: cfg.format, Direction: c.Direction, Category: c.Category}
+	result := Result{ID: c.ID, System: cfg.system, Variant: cfg.variant, Direction: c.Direction, Category: c.Category}
 	target, err := targetLanguage(c.Direction)
 	if err != nil {
 		result.Error = err.Error()
@@ -113,13 +103,8 @@ func (cfg config) run(c Case) Result {
 		result.Error = err.Error()
 		return result
 	}
-	messages, err := messagesFor(cfg.format, target, c.Source, context)
-	if err != nil {
-		result.Error = err.Error()
-		return result
-	}
 	started := time.Now()
-	output, err := cfg.translate(messages)
+	output, err := cfg.translate(llm.ChatMessages(target, c.Source, context, ""))
 	result.Millis = time.Since(started).Milliseconds()
 	if err != nil {
 		result.Error = err.Error()
@@ -197,7 +182,6 @@ func main() {
 	model := flag.String("model", "default", "model name sent to the endpoint")
 	system := flag.String("system", "", "name recorded on each result")
 	variant := flag.String("variant", "none", "context variant: none, correct or irrelevant")
-	format := flag.String("format", "chat", "prompt format, only chat for now")
 	keyFile := flag.String("api-key-file", "", "file holding the API key, never printed")
 	temperature := flag.Float64("temperature", 0, "sampling temperature")
 	noThinking := flag.Bool("no-thinking", false, "turn off reasoning, for DeepSeek")
@@ -228,7 +212,7 @@ func main() {
 	}
 	defer out.Close()
 	cfg := config{endpoint: strings.TrimRight(*endpoint, "/"), model: *model, system: *system, variant: *variant,
-		format: *format, temperature: *temperature, noThinking: *noThinking, client: &http.Client{Timeout: 5 * time.Minute}}
+		temperature: *temperature, noThinking: *noThinking, client: &http.Client{Timeout: 5 * time.Minute}}
 	if *keyFile != "" {
 		key, err := os.ReadFile(*keyFile)
 		if err != nil {

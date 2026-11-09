@@ -16,5 +16,5 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: go install sigs.k8s.io/kind@v0.29.0
-      - run: deploy/kind/up.sh fake
+      - run: deploy/kind/up.sh
       - run: deploy/kind/fault-matrix.sh

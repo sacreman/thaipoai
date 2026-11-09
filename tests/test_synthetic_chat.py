@@ -15,3 +15,7 @@ def test_usable_refuses_suite_messages_wrong_language_and_bad_shape():
 def test_row_names_the_target_language():
     row = row_of({**CASE, "direction": "en-th", "category": "idiom"})
     assert row["target_lang"] == "Thai" and row["target"] == "มาไหม" and row["context"] == CASE["context"]
+
+
+def test_row_drops_a_speaker_label_from_the_message():
+    assert row_of({**CASE, "source": "B: Are you coming?", "direction": "en-th", "category": "idiom"})["source"] == "Are you coming?"

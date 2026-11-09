@@ -206,8 +206,7 @@ func TestPerModelCountsRestartWithANewRollout(t *testing.T) {
 }
 
 func TestABrokenRoutingFileKeepsTheLastRouting(t *testing.T) {
-	ts, s := routed(t, 99, nil)
-	_ = ts
+	_, s := routed(t, 99, nil)
 	file := t.TempDir() + "/routing.json"
 	os.WriteFile(file, []byte(`{"id":"r2","stable":"new"}`), 0o644)
 	s.followRouting(file)

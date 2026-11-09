@@ -82,7 +82,7 @@ func numbersChanged(source, output string) bool {
 var thaiHour = map[string]string{"หนึ่ง": "7", "1": "7", "สอง": "8", "2": "8", "สาม": "9", "3": "9", "สี่": "10", "4": "10", "ห้า": "11", "5": "11"}
 
 // eveningChanged compares Thai evening hours with English PM hours: สองทุ่ม is 8 pm.
-// ponytail: evening hours only, the one clock where the words and the digits disagree most.
+// Known limit: evening hours only, the one clock where the words and the digits disagree most.
 func eveningChanged(source, output string) bool {
 	thai, english := normaliseDigits(source), normaliseDigits(output)
 	if !thaiEvening.MatchString(thai) {

@@ -38,9 +38,6 @@ const (
 	maxHistory      = 10
 	modelPort       = 8000
 	gatewayPort     = 8088
-	defaultPercent  = 10
-	defaultSamples  = 100
-	defaultMinutes  = 60
 	transitionDelay = 10 * time.Millisecond
 )
 
@@ -64,20 +61,6 @@ type reconciler struct {
 	now           func() time.Time
 	chat          func(ctx context.Context, model string, messages []llm.Message) (string, error)
 	fetch         func(ctx context.Context, url string, into any) error
-}
-
-func canaryOf(spec api.Spec) (percent int, samples int64, timeout time.Duration) {
-	percent, samples, minutes := spec.Canary.Percent, int64(spec.Canary.MinSamples), spec.Canary.TimeoutMinutes
-	if percent == 0 {
-		percent = defaultPercent
-	}
-	if samples == 0 {
-		samples = defaultSamples
-	}
-	if minutes == 0 {
-		minutes = defaultMinutes
-	}
-	return percent, samples, time.Duration(minutes) * time.Minute
 }
 
 func configMapName(mr *api.ModelRollout) string { return "rollout-" + mr.Name }
@@ -106,10 +89,9 @@ func (r *reconciler) recoverStable(ctx context.Context, mr *api.ModelRollout) (*
 
 // apply publishes what the current status says should be deployed.
 func (r *reconciler) apply(ctx context.Context, mr *api.ModelRollout) error {
-	percent, _, _ := canaryOf(mr.Spec)
 	desired, routing := rollout.Plan(rollout.PlanInput{
 		Phase: mr.Status.Phase, Stable: mr.Status.Stable, Previous: mr.Status.Previous, Candidate: mr.Spec.Model,
-		Percent: percent, Base: r.base, ID: mr.Spec.ID(),
+		Percent: mr.Spec.Canary.Percent, Base: r.base, ID: mr.Spec.ID(),
 	})
 	desiredJSON, err := json.Marshal(map[string]any{"models": desired})
 	if err != nil {
@@ -242,8 +224,8 @@ func (r *reconciler) step(ctx context.Context, mr *api.ModelRollout) (rollout.De
 			return rollout.Wait, "", err
 		}
 		status.Canary = &counts
-		_, samples, timeout := canaryOf(mr.Spec)
-		decision, reason := rollout.EvaluateCanary(counts.Stable, counts.Candidate, samples, elapsed, timeout)
+		timeout := time.Duration(mr.Spec.Canary.TimeoutMinutes) * time.Minute
+		decision, reason := rollout.EvaluateCanary(counts.Stable, counts.Candidate, int64(mr.Spec.Canary.MinSamples), elapsed, timeout)
 		return decision, reason, nil
 	}
 	return rollout.Wait, "", nil
@@ -402,7 +384,7 @@ func main() {
 	if err := api.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
-	// ponytail: one replica and no leader election. A restart resumes from status; two replicas need election.
+	// Known limit: one replica and no leader election. A restart resumes from status; two replicas need election.
 	manager, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:  scheme,
 		Metrics: metricsserver.Options{BindAddress: "0"},

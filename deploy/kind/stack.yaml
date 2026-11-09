@@ -1,4 +1,4 @@
-# Everything except the model replicas, which are in model-fake.yaml or model-mac.yaml.
+# Everything except the model replicas, which are in model-fake.yaml.
 apiVersion: v1
 kind: Service
 metadata:
@@ -71,7 +71,7 @@ spec:
         - name: controller
           image: thaipoai/rollout-controller:dev
           imagePullPolicy: Never
-          args: ["--verify-timeout=__VERIFY__", "--poll=1s"]
+          args: ["--verify-timeout=45s", "--poll=1s"]
           volumeMounts: [{name: suites, mountPath: /suites}]
       volumes:
         - {name: suites, configMap: {name: suites}}

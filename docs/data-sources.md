@@ -1,8 +1,8 @@
-# English-Thai parallel data for a ~300M-parameter from-scratch bilingual Transformer
+# English-Thai parallel data
 
-Research date 2026-11-09. Not legal advice.
+How the training data for the from-scratch model was chosen. Researched 9 November 2026. Not legal advice.
 
-Labels used below: **[sourced]** read on the cited page. **[estimate]** my own number or inference.
+Labels used below: **[sourced]** read on the cited page. **[estimate]** our own number or inference.
 
 ## 1. Bottom line
 
@@ -11,7 +11,7 @@ Labels used below: **[sourced]** read on the cited page. **[estimate]** my own n
 - Reaching millions of pairs means using web crawl (HPLT) and subtitles (OpenSubtitles). Both have unclear rights in the underlying text.
 - Nearly every curated source is **English-origin**. Thai-origin text is the biggest quality gap for the th->en direction and is not fixed by any public dataset found.
 
-## 2. Local data (manifest.json)
+## 2. Corpora already downloaded
 
 `alt` 19,896, `talpco` 1,366, `tatoeba` 4,895 = **26,157 unique pairs**. `train_rows` 51,330 + `validation_rows` 984 = 52,314 = 26,157 x 2, so the 51k rows are the same pairs in both directions, not 51k pairs.
 
@@ -24,7 +24,7 @@ Contribution: about 0.9% of the core mix below, and 5% of the clean human-transl
 - Paper: https://arxiv.org/abs/2007.03541, full text read at https://ar5iv.labs.arxiv.org/html/2007.03541
 - Licence: **CC BY-SA 4.0** (card: "The center releases the dataset and baseline models under CC-BY-SA 4.0"). Code repo is Apache-2.0 (https://github.com/vistec-AI/thai2nmt) but that covers code, not data. The paper itself states no licence.
 - Size: 1,001,752 pairs. Card splits: train 801,402, validation 100,173, test 100,177.
-- Filtering: per-dataset handcrafted rules (token min/max, character share, EN/TH token ratio, exact duplicates) plus Universal Sentence Encoder cosine similarity: web crawl threshold 0.7, Thai government 0.5, others not listed. Mean similarity per subset from 0.58 (nus_sms) to 0.82 (msr_paraphrase), paper Table 4. No Cohere-style score exists in the paper or card; I found no such score for this dataset.
+- Filtering: per-dataset handcrafted rules (token min/max, character share, EN/TH token ratio, exact duplicates) plus Universal Sentence Encoder cosine similarity: web crawl threshold 0.7, Thai government 0.5, others not listed. Mean similarity per subset from 0.58 (nus_sms) to 0.82 (msr_paraphrase), paper Table 4. Neither the paper nor the card provides a per-pair quality score.
 
 | Subset (paper Table 2) | Pairs | Original language | Method | Conversational? |
 |---|---:|---|---|---|
@@ -47,7 +47,7 @@ Discrepancies: card lists mozilla_common_voice as 2,451 train rows and a wrong-l
 
 Direction: all human/crowd subsets are English-origin. Thai-origin text can only be in the auto-aligned 252,976, share unknown.
 
-**Google output risk (280,208 pairs):** an older third-party copy of Google's Service Specific Terms bars using Cloud Translation "to create, train, or improve ... any other machine translation engine" (https://static.carahsoft.com/concrete/files/7615/1311/1617/Google_Service_Specific_Terms.pdf). The current page (https://cloud.google.com/terms/service-terms) has no such line in section 25, but section 17 bars using generated output to create models similar to a Google model; whether Translation counts as an AI/ML service is not stated, and I read only the first 100k of 144k characters. Treat this subset as excluded for an open release.
+**Google output risk (280,208 pairs):** an older third-party copy of Google's Service Specific Terms bars using Cloud Translation "to create, train, or improve ... any other machine translation engine" (https://static.carahsoft.com/concrete/files/7615/1311/1617/Google_Service_Specific_Terms.pdf). The current page (https://cloud.google.com/terms/service-terms) has no such line in section 25, but section 17 bars using generated output to create models similar to a Google model; whether Translation counts as an AI/ML service is not stated, and only the first 100k of 144k characters were read. Treat this subset as excluded for an open release.
 
 ### OPUS en-th inventory (API listing)
 https://opus.nlpl.eu/opusapi/?source=en&target=th&preprocessing=moses&version=latest
@@ -76,7 +76,7 @@ TED policy: https://www.ted.com/about/our-organization/our-policies-terms/ted-ta
 OpenSubtitles quality: general literature reports many misaligned or badly translated pairs and alignment-score pruning (https://nr.no/publikasjon/1650877/). No Thai-specific error rate found. Direction [estimate]: mostly English-origin films with Thai subtitles.
 
 ### HPLT v2
-https://arxiv.org/html/2503.10267v3 Table 5: `tha_Thai` **4,088,354** deduplicated pairs. Project page (https://hplt-project.org/datasets/v2.0) licenses packaging as CC0 and disclaims the underlying text, with takedown by request, stated for monolingual data; I did not find the parallel-data licence on that page. An HPLT paper reports CC0 for its parallel releases (https://aclanthology.org/2025.mtsummit-2.21). Web-crawled, register unverified, some web pages are themselves MT.
+https://arxiv.org/html/2503.10267v3 Table 5: `tha_Thai` **4,088,354** deduplicated pairs. Project page (https://hplt-project.org/datasets/v2.0) licenses packaging as CC0 and disclaims the underlying text, with takedown by request, stated for monolingual data; The parallel-data licence is not on that page. An HPLT paper reports CC0 for its parallel releases (https://aclanthology.org/2025.mtsummit-2.21). Web-crawled, register unverified, some web pages are themselves MT.
 
 ### ALT Parallel Corpus
 https://www2.nict.go.jp/astrec-att/member/mutiyama/ALT/index.html 20,106 sentences, 1,893 articles, English Wikinews translated by NICT. Parallel corpus CC BY 4.0. News register, not conversational. Standard split 18,088 / 1,000 / 1,018. Thai is one of 13 languages, no Thai-specific notes. Overlap with OPUS ALT (same data).
@@ -85,7 +85,7 @@ https://www2.nict.go.jp/astrec-att/member/mutiyama/ALT/index.html 20,106 sentenc
 https://huggingface.co/datasets/iapp/ChindaMT-Grounded and paper https://arxiv.org/html/2609.34770
 - 1,973,358 records (1,172,061 en-th, 801,297 th-en), from 1,206,946 unique source pairs. Alpaca instruction format.
 - **Outputs are machine-generated.** Constraints are extracted from reference translations, then targets are regenerated by Qwen3.5-35B-A3B-FP8 and kept only if all constraints pass. Authors report a reference-free audit rating regenerated targets at least as good as references. Human evaluation was 3 raters on 100 outputs of the *model*, not an audit of the dataset.
-- Qwen: Apache-2.0 per the Base model card (https://huggingface.co/Qwen/Qwen3.5-35B-A3B-Base); I did not read the official instruct card or the FP8 quantisation's card. Apache would allow training.
+- Qwen: Apache-2.0 per the Base model card (https://huggingface.co/Qwen/Qwen3.5-35B-A3B-Base); The official instruct card and the FP8 quantisation's card were not read. Apache would allow training.
 - Sources: hplt 660,898, paracrawl 649,378, xlent 326,134, scb_2020 239,871, opensubtitles 63,048, bible 17,326, wikimedia 8,212, en-th-texts 8,035, tatoeba 392, elrc 64. Selected for instruction-following difficulty from a 17.85M-record pool.
 - Licence CC BY-SA 4.0.
 - Glossary: no glossary data. A mandated glossary is explicitly out of scope; "specific terms" constraints come from the reference only.
@@ -112,7 +112,7 @@ https://huggingface.co/datasets/openlanguagedata/flores_plus Thai listed (`tha`)
 
 ## 4. Ratings
 
-Scale: H / M / L. Accuracy = translation accuracy, Nat = naturalness, Conv = conversational relevance, Origin = Thai-origin coverage. These are my judgements from the method descriptions, not measured.
+Scale: H / M / L. Accuracy = translation accuracy, Nat = naturalness, Conv = conversational relevance, Origin = Thai-origin coverage. These are judgements from the method descriptions, not measurements.
 
 | Source | Accuracy | Nat | Conv | Origin | Overlap | Licence | Usable pairs | Cost |
 |---|---|---|---|---|---|---|---:|---|
@@ -152,7 +152,7 @@ Scale: H / M / L. Accuracy = translation accuracy, Nat = naturalness, Conv = con
 
 SCB BLEU caveat [estimate]: IWSLT test sets are TED talks, OPUS includes QED educational subtitles, so test-train overlap may flatter the OPUS gain.
 
-Reading: about 500k pairs is workable for a smaller model but not for 300M from scratch; roughly 3-6M is where evidence shows usable quality; 25M+ is what the closest comparable used. Pair counts are not directly comparable between models or test sets. I found no published learning curve for Thai.
+Reading: about 500k pairs is workable for a smaller model but not for 300M from scratch; roughly 3-6M is where evidence shows usable quality; 25M+ is what the closest comparable used. Pair counts are not directly comparable between models or test sets. No published learning curve for Thai turned up.
 
 Shortfall: clean human set 495k is 2% of 26.9M. Core mix 2.8M is 10%. With subtitles 5.8M is 22%.
 
@@ -200,5 +200,5 @@ Not found: Appen, TELUS, Toloka per-sentence rates; Upwork Thai hourly rates.
 - LEXiTRON terms.
 - Google Cloud service terms beyond the first 100k characters.
 - Filter yields for HPLT and OpenSubtitles are estimates; quality ratings are from method descriptions, no data sampled.
-- TALPCo and Tatoeba licences taken from your brief, not re-read.
-- Your own chat logs are not assessed or counted.
+- TALPCo and Tatoeba licences were not re-read.
+- The application chat data is not assessed here.

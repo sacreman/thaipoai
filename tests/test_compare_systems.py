@@ -1,4 +1,4 @@
-from train.compare_systems import compare, majority, one_sided, upper_95
+from evaluation.compare_systems import compare, majority, one_sided, upper_95
 
 
 def test_majority_ignores_failed_calls_and_leaves_ties_unjudged():

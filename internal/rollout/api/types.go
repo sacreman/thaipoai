@@ -76,7 +76,7 @@ type ModelRolloutList struct {
 	Items           []ModelRollout `json:"items"`
 }
 
-// ponytail: deep copies go through JSON instead of generated code. One object, reconciled every few seconds.
+// Known limit: deep copies go through JSON instead of generated code. One object, reconciled every few seconds.
 func roundTrip[T any](in *T) *T {
 	raw, err := json.Marshal(in)
 	if err != nil {
@@ -90,10 +90,10 @@ func roundTrip[T any](in *T) *T {
 }
 
 // DeepCopyObject implements runtime.Object.
-func (a *ModelRollout) DeepCopyObject() runtime.Object { return roundTrip(a) }
+func (mr *ModelRollout) DeepCopyObject() runtime.Object { return roundTrip(mr) }
 
 // DeepCopyObject implements runtime.Object.
-func (a *ModelRolloutList) DeepCopyObject() runtime.Object { return roundTrip(a) }
+func (list *ModelRolloutList) DeepCopyObject() runtime.Object { return roundTrip(list) }
 
 // AddToScheme registers the resource.
 func AddToScheme(scheme *runtime.Scheme) error {
