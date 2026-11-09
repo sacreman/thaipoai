@@ -9,6 +9,9 @@ dependencies = [
 ]
 
 [dependency-groups]
+data = [
+    "pyarrow>=26.0.1",
+]
 dev = [
     "pytest",
 ]

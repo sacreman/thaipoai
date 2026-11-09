@@ -156,22 +156,12 @@ Reading: about 500k pairs is workable for a smaller model but not for 300M from 
 
 Shortfall: clean human set 495k is 2% of 26.9M. Core mix 2.8M is 10%. With subtitles 5.8M is 22%.
 
-## 7. Recommended first mix
+## 7. What was chosen
 
-| Part | Pairs | Status |
-|---|---:|---|
-| ALT + TALPCo + Tatoeba | 26,157 | Local, CC BY; oversample |
-| SCB human/crowd | 468,568 | CC BY-SA; oversample dialogs, SMS, voice |
-| SCB auto-aligned | ~250k | CC BY-SA, after dedupe |
-| HPLT v2 en-th, top half by filter | ~2.0M | [estimate] |
-| Wikimedia | ~50k | [estimate], verify licence |
-| **Core total** | **~2.8M** | |
-| OpenSubtitles v2024, filtered | ~3M | [estimate], owner decision |
-| **With subtitles** | **~5.8M** | |
-
-Excluded: SCB Google-output, TED, QED, LDC, ChindaMT, FineTranslations, FLORES+ (benchmark only), quickmt aggregate, Bible/Tanzil, software strings.
-
-Thai-origin gap: commission Thai-written conversational sentences translated into English, and hold some out as a th->en test set.
+The first mix favours pairs with documented human review over volume: SCB's professional subsets, MTOP
+Thai, and filtered MASSIVE Thai, 298,930 training pairs in all. `SPEC.md` section 4.1 has the counts,
+filters and audit. MTOP is CC BY-SA 4.0 and MASSIVE is CC BY 4.0, both read from their licence files.
+ALT, TALPCo, Tatoeba and the crawled sources stay out until a run shows more data helps.
 
 ## 8. Commissioned review and translation prices
 

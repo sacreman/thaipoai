@@ -1,4 +1,4 @@
-// Command extract-audit is the release gate from SPEC section 4.4. It plants fake phone numbers
+// Command extract-audit is the release gate from SPEC section 4.5. It plants fake phone numbers
 // and names in a training file at known rates, then asks the trained model to give them back.
 // It reports counts and rates only: canary values stay in the manifest.
 //

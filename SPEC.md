@@ -2,7 +2,7 @@
 
 Version 8.0, 9 November 2026. Personal open-source project by Steven Acreman.
 Public repository `sacreman/thaipoai`. Code is Apache-2.0. The weights' licence follows the
-training data (section 4.3).
+training data (section 4.4).
 
 Earlier work downloaded pretrained models and fine-tuned them. It did not look promising and has
 been removed. `docs/pretrained-experiments.md` records what was done and what it showed.
@@ -47,18 +47,16 @@ One bilingual encoder-decoder Transformer in core MLX, not `mlx-lm`. Target-lang
 the direction. Every parameter is trainable from random initialisation, embeddings and output
 weights included.
 
-| Config | Encoder/decoder layers | d_model | Heads | Feed-forward | Tying | Parameters |
-|---|---|---|---|---|---|---|
-| **A, starting point** | 9/9 | 1024 | 16 | 4096 | Source = target = output | 297,197,568 |
-| B | 15/15 | 768 | 12 | 3072 | Source = target, separate output | 297,111,552 |
-| C | 7/7 | 1024 | 16 | 4096 | All separate | 303,972,352 |
+| Config | Encoder/decoder layers | d_model | Heads | Feed-forward | Parameters |
+|---|---|---|---|---|---|
+| **full** | 9/9 | 1024 | 16 | 4096 | 297,197,568 |
+| baseline | 8/8 | 512 | 8 | 2048 | 75,188,224 |
 
-Counts are from instantiated models at a vocabulary of 32,000 [measured]. In A the shared matrix is
-still fully trained. Use C if a separate output matrix is wanted. Implementation and memory checks
-decide the final configuration.
+Counts are from instantiated models at a vocabulary of 32,000 [measured]. Both share one matrix for
+the source embedding, target embedding and output projection, and that matrix is fully trained.
 
-**Size risk.** 500,000 pairs is about 24M tokens per epoch against 297M parameters [estimate], so a
-smaller baseline, in the region of opus-mt's 76M, runs alongside.
+**Size risk.** The first corpus is about 300,000 pairs, far below what a model of this size usually
+needs, so the baseline trains on the same data for comparison.
 
 **Implementation.**
 - Hand-written layers. `nn.Transformer` has no decode cache, embeddings or positions.
@@ -83,7 +81,8 @@ One joint SentencePiece unigram model at 32,000 pieces, retrained on the full co
   this, so a test checks the round trip.
 - Pad 0, bos 1, eos 2, unk 3, with control symbols `<en>`, `<th>`, `<sep>`, `<ctx>`, `<gloss>`.
   Literal `<th>` in user text must not produce the marker.
-- Mean pieces on public data at 32,000: 19.46 Thai, 24.46 English [measured on 10 MB].
+- On held-out text at 32,000 pieces: 9.65 Thai and 15.18 English per message, no unknown tokens, and
+  every line round-trips [measured on 5,000 test rows].
 
 ### Context and glossary
 
@@ -100,42 +99,59 @@ Every row keeps its source metadata. Collections are deduplicated against each o
 samples are audited before substantial training time is committed. Split by conversation or document
 **before** creating examples in both directions, so one exchange never lands on both sides.
 
-### 4.1 Selection
+### 4.1 The first training mix
 
-Full notes, sources and criteria are in `docs/data-sources.md`. Starred counts are filter-yield
-estimates. Quality here comes from method descriptions, and step 5 audits samples.
+Built by `train/corpus.py`. Each row records its source, subset, review process and licence, so a run
+selects exactly what it trains on. Each source's published validation and test rows stay held out.
 
-| Source | Usable pairs | Licence | Decision |
-|---|---:|---|---|
-| SCB human and crowd (dialogs, reviews, SMS, voice) | 468,568 | CC BY-SA | Backbone. Oversample dialogs |
-| ALT, TALPCo, Tatoeba (held locally) | 26,157 | CC BY, per sentence | Keep, oversample |
-| Synthetic chat (`data/synthetic-chat-v1`) | 3,870 | Own, drafted by DeepSeek | Keep |
-| HPLT v2 | about 2.0M* of 4.09M | CC0 packaging per paper | Volume, after confirming the licence |
-| SCB auto-aligned | about 250k | CC BY-SA | Possible Thai-origin source |
-| Wikimedia | about 50k* | Not verified | Minor, after confirming the licence |
-| OpenSubtitles v2024 | about 3M* of 24.8M | None stated | Excluded for now. Best chat register, unknown rights |
-| SCB Google-output | 280,208 | Google terms risk | Excluded |
-| ChindaMT-Grounded | 1.97M | CC BY-SA | Excluded. Regenerated targets and duplicated sources |
-| LDC LORELEI Thai | 2.85M words | No commercial use for non-members | Excluded |
-| QED, TED | 528k | Research-only, NC-ND | Excluded |
-| FLORES+ | 997 + 1,012 | CC BY-SA, gated | Benchmark only, never trained on |
+| Source | Training pairs | Held out | Quality control | Licence |
+|---|---:|---:|---|---|
+| SCB task dialogs | 182,213 | 36,937 | Professional translators | CC BY-SA 4.0 |
+| SCB generated reviews | 105,102 | 27,696 | Professional translators | CC BY-SA 4.0 |
+| MTOP Thai | 10,483 | 4,394 | Two translators, one reviewer, annotation review | CC BY-SA 4.0 |
+| MASSIVE Thai | 1,132 | 654 | Three human ratings, then a meaning check | CC BY 4.0 |
+| **Total** | **298,930** | **69,681** | | |
 
-First mix: about 2.8M pairs. A comparable from-scratch model, quickmt at 195M parameters, used 26.9M
-rows, so this mix is about 10% of that and the clean human set about 2%.
+**MASSIVE** keeps only rows with unanimous top ratings, no localized slots, the same slots as the
+English, and a passing Jev majority (`data/massive-th-verified.json`). Spaces between Thai words,
+which annotators added, are removed. 2,015 of 16,521 rows survive before deduplication.
 
-### 4.2 The biggest gap
+**SCB** names its professional subsets differently in the training split, `task_master_corpus` and
+`fake_reviews_hope`. Filtering only on the documented names would silently drop them.
+
+**Audit [measured].** Three Jev votes on 150 random training rows per source. Rows judged wrong: task
+dialogs 4, generated reviews 18, MTOP 2, MASSIVE 0. The review errors read as real when inspected:
+dropped sentences and changed meaning. MASSIVE's 0 is expected, since Jev already filtered it.
+
+**Comparison before commitment.** Train SCB-only and combined runs, and compare with and without the
+generated reviews, before adding anything else.
+
+**Not in the first mix:** SCB `generated_reviews_yn`, which is Google output and carries a licence
+risk. ALT and TALPCo, whose review processes are not established for each pair. Crawled data and
+subtitles (`docs/data-sources.md`). FLORES+ is benchmark only and never trained on.
+
+### 4.2 Published corpus
+
+The combined corpus and its tokenizer are published as a versioned GitHub release, so a laptop or a GPU
+box can pull exactly the same data. `.github/workflows/corpus-release.yml` runs on demand and needs no
+secrets. It downloads each source from `train/sources.py`, where every file is pinned by sha256, builds
+the corpus and tokenizer, and publishes `corpus.tgz`, its checksum, the manifest and an attribution
+notice. The package is CC BY-SA 4.0 and a version is never replaced. The build stops if any row has an
+unregistered source or licence. A new source must allow redistribution as well as training.
+
+### 4.3 The biggest gap
 
 SCB's human-translated data is English-origin, and no usable public Thai-origin set turned up.
 Commissioned Thai-written chat translated into English closes this, with part held out for testing.
 Estimated from advertised rates: $3,000 to $12,000 per 10,000 ten-word sentences for translation,
 and about half that for review.
 
-### 4.3 Weights licence
+### 4.4 Weights licence
 
 ShareAlike on model weights is legally unsettled. If SCB is in, CC BY-SA on the weights is the
 safest option. A licence on the weights cannot fix unknown source rights.
 
-### 4.4 App data
+### 4.5 App data
 
 The two chat applications hold about 300,000 pairs produced by the DeepSeek workflow. Provenance must
 be separable into raw model output, automatically corrected and genuinely human-reviewed rows.
@@ -157,8 +173,8 @@ Build the evaluation sets first, and keep them out of training.
 | `suites/pilot` | Checkpoint tracking during training |
 | `suites/golden` | Must-pass cases for the rollout gate |
 | FLORES+ | Public benchmark |
-| Commissioned Thai-written chat | Held-out conversational test (section 4.2) |
-| App conversations | Held-out real-chat test, once section 4.4 is met |
+| Commissioned Thai-written chat | Held-out conversational test (section 4.3) |
+| App conversations | Held-out real-chat test, once section 4.5 is met |
 
 Training data never contains a suite message: every row whose normalised source appears in any
 suite is dropped when the corpus is built. A few short public sentences match today.
@@ -190,14 +206,14 @@ A step is done when it **runs for real, has a test that fails if it breaks, has 
 
 1. Inspect the repository, keep what is reusable, replace the plan. Done with this version.
 2. Evaluation set first. Section 5.
-3. Validate training: learn a tiny dataset, every intended weight updates, exact checkpoint resume
-   against a control run.
+3. Validate training: learn a tiny dataset, every intended weight updates, a checkpoint restores state
+   bit for bit and then tracks a control run within floating-point noise. Built, awaiting approval.
 4. Benchmark the laptop: several hundred representative steps, measuring GPU use, memory and
    sustained throughput, before estimating a full run.
 5. Train on selected public data. Evaluate checkpoints regularly and use measured progress to decide
    whether more training is worth it.
 6. Adapt to application data, emphasising verified corrections, conversational language and
-   terminology. Requires section 4.4.
+   terminology. Requires section 4.5.
 7. Compare against the production system, each direction separately.
 
 ---
@@ -244,7 +260,7 @@ without human review.
 ```
 cmd/{gateway,rollout-controller,fake-model,suite,extract-audit}
 internal/{guards,llm,rollout}  deploy/{crd.yaml,Dockerfile,kind}
-train/  evaluation/  suites/  data/synthetic-chat-v1/  tests/
+train/  evaluation/  suites/  data/{synthetic-chat-v1/,massive-th-verified.json}  tests/
 docs/{pretrained-experiments.md,data-sources.md,rollout-states.md,extract-audit.md,steps/}
 ```
 

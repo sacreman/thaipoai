@@ -1,0 +1,40 @@
+name: corpus-release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New release tag, such as corpus-v1. An existing version is never replaced.
+        required: true
+permissions: {}
+concurrency: corpus-release
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyarrow==26.0.1 sentencepiece==0.2.3
+      - name: Refuse a malformed or existing version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$VERSION" =~ ^corpus-v[0-9]+$ ]] || { echo "version must look like corpus-v1"; exit 1; }
+          if gh release view "$VERSION" > /dev/null 2>&1; then echo "$VERSION already exists"; exit 1; fi
+      - run: python -m train.release fetch
+      - run: python -m train.corpus
+      - run: python -m train.tokenizer
+      - run: python -m train.release package --version "$VERSION"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION" --target "$GITHUB_SHA" --title "English-Thai corpus $VERSION" --notes-file runs/release/NOTICE.md runs/release/*

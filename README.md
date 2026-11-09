@@ -21,9 +21,9 @@ flowchart LR
 | # | Step | State |
 |---|---|---|
 | 1 | Inspect the repo, replace the plan | Done |
-| 2 | Build the evaluation sets first | Next |
-| 3 | Prove training works: overfit, all weights move, exact resume | |
-| 4 | Benchmark the laptop over several hundred real steps | |
+| 2 | Build the evaluation sets first | Corpus held-out splits and suites ready. FLORES+ pending |
+| 3 | Prove training works: overfit, all weights move, exact resume | Built, awaiting review |
+| 4 | Benchmark the laptop over several hundred real steps | Next |
 | 5 | Train on public data, evaluating checkpoints as it goes | |
 | 6 | Adapt to application data, once consent records exist | Blocked |
 | 7 | Compare with the production system, per direction | |
@@ -33,10 +33,10 @@ flowchart LR
 | Path | What it is |
 |---|---|
 | [`SPEC.md`](SPEC.md) | The experiment: model, data, evaluation, sequence |
-| [`train/`](train) | Data preparation and, as it lands, the MLX training pipeline |
+| [`train/`](train) | Source registry, corpus builder and release packager, tokenizer, Transformer and MLX trainer |
 | [`evaluation/`](evaluation) | Paired comparison, meaning judge, suite drafting, baseline run |
 | [`suites/`](suites) | Synthetic test cases with intended meanings |
-| [`data/synthetic-chat-v1/`](data/synthetic-chat-v1) | 4,073 synthetic chat translation pairs |
+| [`data/`](data) | Synthetic chat pairs and the MASSIVE rows that passed a meaning check |
 | [`cmd/gateway`](cmd/gateway) | Translation API with guards. Never logs text |
 | [`cmd/rollout-controller`](cmd/rollout-controller) | Kubernetes controller for eval-gated model rollouts |
 | [`cmd/extract-audit`](cmd/extract-audit) | Release gate that tests a model for memorised personal details |
@@ -67,8 +67,28 @@ uv run pytest
 deploy/kind/up.sh && deploy/kind/fault-matrix.sh
 ```
 
+The training corpus and tokenizer are published as a versioned release. Download one and check it:
+
+```bash
+curl -LO https://github.com/sacreman/thaipoai/releases/download/corpus-v1/corpus.tgz
+```
+
+```bash
+curl -LO https://github.com/sacreman/thaipoai/releases/download/corpus-v1/corpus.tgz.sha256
+```
+
+```bash
+shasum -a 256 -c corpus.tgz.sha256 && tar -xzf corpus.tgz
+```
+
+Then train:
+
+```bash
+uv run python -m train.train --config full --sources scb,mtop,massive --out runs/combined-full
+```
+
 ## Data and licences
 
-Code is [Apache-2.0](LICENSE). Dataset choices, licences and open questions are in [`docs/data-sources.md`](docs/data-sources.md), and the weights will carry a licence that matches the training data. Everything in this repository is public or synthetic. No private chat text is stored here.
+Code is [Apache-2.0](LICENSE). The published corpus is CC BY-SA 4.0, with its sources credited in `NOTICE.md`. Dataset choices, licences and open questions are in [`docs/data-sources.md`](docs/data-sources.md). Everything in this repository is public or synthetic. The training data has CC BY-SA sources, so the weights will be CC BY-SA. No private chat text is stored here.
 
 Built with AI coding agents, designed and reviewed by Steven Acreman.

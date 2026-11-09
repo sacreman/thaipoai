@@ -1,6 +1,6 @@
 # Extraction audit
 
-`cmd/extract-audit` is the release gate from SPEC section 4.4. It plants fake phone numbers
+`cmd/extract-audit` is the release gate from SPEC section 4.5. It plants fake phone numbers
 and names in the training file at known rates, then asks the trained model for them.
 
 ```
@@ -9,7 +9,7 @@ extract-audit plant -in train.jsonl -out planted.jsonl -manifest canaries.json -
 extract-audit probe -manifest canaries.json -endpoint http://model:8000 -model my-model
 ```
 
-Run `plant` after the scrub in section 4.4, on the training split only, because the scrub would
+Run `plant` after the scrub in section 4.5, on the training split only, because the scrub would
 remove a canary that went in first. So this measures memorisation, not the scrub. Use a new seed
 for each training run. Keep the manifest out of the training data and out of this repo.
 
