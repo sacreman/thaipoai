@@ -6,8 +6,10 @@ import sys
 import mlx.core as mx
 from mlx.utils import tree_flatten
 
+from train.evaluate import average_checkpoints
 from train.model import CONFIGS, Config, Translator, parameter_count
-from train.tokenizer import EOS
+from train.tokenizer import EOS, Tokenizer
+from train.tokenizer import train as train_tokenizer
 from train.train import Settings, Trainer, batches_for, bucket_of
 import train.train as train_module
 
@@ -78,6 +80,44 @@ def test_resume_restores_state_exactly_and_tracks_an_uninterrupted_run(tmp_path)
     assert all(math.isclose(a, b, rel_tol=1e-3) for a, b in zip(losses, control_losses))
 
 
+def test_word_dropout_spares_markers_and_padding():
+    ids = mx.array([[0, 1, 2, 3, 4, 8, 9, 40, 41]], mx.int32)
+    assert train_module.drop_words(ids, 1.0).tolist() == [[0, 1, 2, 3, 4, 8, 3, 3, 3]]
+    assert train_module.drop_words(ids, 0.0).tolist() == ids.tolist()
+
+
+def test_sampled_segmentation_repeats_for_a_seed_and_still_decodes(tmp_path):
+    text = ["น้ำเย็นมาก ขอบคุณครับ", "ทำไมไม่มาทำงาน", "Thank you very much", "Where are you going today?", "ไปกินข้าวกันไหม"]
+    train_tokenizer(text * 40, tmp_path / "t.model", 55)
+    tokenizer = Tokenizer(tmp_path / "t.model")
+    rows = [{"en": text[3], "th": text[0]}] * 30
+
+    def sampled(seed):
+        return train_module.examples_from(rows, tokenizer, alpha=0.2, seed=seed)[0]
+
+    assert sampled("0-1") == sampled("0-1") != sampled("0-2")
+    assert len({tuple(target) for _, target in sampled("0-1")}) > 2  # one sentence, several segmentations
+    assert all(tokenizer.decode(target) in (text[0], text[3]) for _, target in sampled("0-1"))
+
+
+def test_examples_can_change_each_epoch(tmp_path):
+    asked = []
+    trainer = Trainer(TINY, lambda epoch: asked.append(epoch) or DATA * 8, tmp_path, 20, SETTINGS)
+    trainer.run(20, log_every=1000)
+    assert asked == [0, 1, 2]  # eight batches an epoch
+
+
+def test_averaging_checkpoints_gives_the_mean_weights(tmp_path):
+    for step, value in ((1, 1.0), (2, 3.0)):
+        folder = tmp_path / f"step-{step}"
+        folder.mkdir()
+        mx.save_safetensors(str(folder / "model.safetensors"), {"w": mx.full((2,), value)})
+        (folder / "meta.json").write_text(json.dumps({"step": step}), encoding="utf8")
+    out = average_checkpoints([tmp_path / "step-1", tmp_path / "step-2"], tmp_path / "averaged")
+    assert mx.load(str(out / "model.safetensors"))["w"].tolist() == [2.0, 2.0]
+    assert json.loads((out / "meta.json").read_text(encoding="utf8")) == {"step": 2}
+
+
 def run_main(tmp_path, monkeypatch, *arguments):
     """Runs train.main with everything heavy replaced. Returns what it passed to each stage."""
     corpus = tmp_path / "data/public/corpus"
@@ -98,8 +138,11 @@ def run_main(tmp_path, monkeypatch, *arguments):
         def run(self, *args, **kwargs):
             return []
 
+        def checkpoints(self):
+            return []
+
     monkeypatch.setattr(train_module, "Tokenizer", lambda: None)
-    monkeypatch.setattr(train_module, "examples_from", lambda rows, tokenizer: (seen.setdefault("trained", rows), 0))
+    monkeypatch.setattr(train_module, "examples_from", lambda rows, tokenizer, **sampling: (seen.setdefault("trained", rows), 0))
     monkeypatch.setattr(train_module, "batches_for", lambda *args: [None])
     monkeypatch.setattr(train_module, "Trainer", FakeTrainer)
     monkeypatch.setattr(train_module, "Evaluator", lambda *args: None)
@@ -119,3 +162,48 @@ def test_subsets_can_be_left_out_and_the_seed_reaches_training(tmp_path, monkeyp
     seen = run_main(tmp_path, monkeypatch, "--sources", "scb,mtop", "--exclude-subsets", "reviews", "--seed", "4")
     assert [r["subset"] for r in seen["trained"]] == ["task_master", "assistant"]
     assert seen["settings"].seed == 4
+
+
+def test_the_teacher_request_turns_thinking_off_and_a_rerun_skips_finished_rows(tmp_path):
+    from train.teacher import pending, request_body
+    body = request_body("hello", "th", "deepseek-flash", 0.7)
+    assert body["thinking"] == {"type": "disabled"} and "Thai" in body["messages"][0]["content"] and body["messages"][1]["content"] == "hello"
+    out = tmp_path / "out.jsonl"
+    rows = [{"id": "a", "text": "x", "to": "th"}, {"id": "b", "text": "y", "to": "en"}]
+    assert pending(rows, out) == rows
+    out.write_text(json.dumps({"id": "a"}) + "\n", encoding="utf8")
+    assert pending(rows, out) == rows[1:]
+
+
+def test_r_drop_adds_nothing_without_dropout_and_something_with_it(tmp_path):
+    def first_loss(dropout, r_drop, folder):
+        settings = Settings(**{**SETTINGS.__dict__, "r_drop": r_drop})
+        return Trainer(Config(**{**TINY.__dict__, "dropout": dropout}), DATA * 8, tmp_path / folder, 1, settings).run(1, log_every=1000)[0]
+
+    assert math.isclose(first_loss(0.0, 5.0, "a"), first_loss(0.0, 0.0, "b"), rel_tol=1e-4)
+    assert first_loss(0.3, 5.0, "c") > first_loss(0.3, 0.0, "d")
+
+
+def test_the_probe_model_is_small():
+    assert 15_000_000 < parameter_count(Translator(CONFIGS["probe"])) < 25_000_000
+
+
+def test_the_outside_score_uses_unseen_pairs_from_each_origin(tmp_path):
+    from train.evaluate import outside_scorer
+    text = ["น้ำเย็นมาก ขอบคุณครับ", "ทำไมไม่มาทำงาน", "Thank you very much", "Where are you going today?", "ไปกินข้าวกันไหม"]
+    train_tokenizer(text * 40, tmp_path / "t.model", 55)
+    tokenizer = Tokenizer(tmp_path / "t.model")
+    rows = [{"source": text[2], "target": text[0], "target_lang": "Thai", "origin": "news"},
+            {"source": text[3], "target": text[1], "target_lang": "Thai", "origin": "book"},
+            {"source": "seen in training", "target": text[4], "target_lang": "Thai", "origin": "book"},
+            {"source": text[0], "target": text[2], "target_lang": "English", "origin": "news"}]
+    (tmp_path / "other.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf8")
+    asked = []
+
+    class Echo:
+        def translate(self, sources):
+            asked.extend(sources)
+            return [source[1:-1] for source in sources]  # the source back, without its marker and end
+
+    report = outside_scorer(tmp_path / "other.jsonl", tokenizer, {"seen in training"})(Echo())
+    assert len(asked) == 4 and set(report) == {"outside", "outside_news", "outside_book"}

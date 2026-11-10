@@ -13,6 +13,7 @@ import sentencepiece as spm
 
 PAD, BOS, EOS, UNK = 0, 1, 2, 3
 MARKERS = ("<en>", "<th>", "<sep>", "<ctx>", "<gloss>")
+WORDS = UNK + 1 + len(MARKERS)  # ids from here up are ordinary pieces
 DEFAULT = Path("models/tokenizer-v1/tokenizer.model")
 
 
@@ -36,8 +37,12 @@ class Tokenizer:
     def __len__(self):
         return self.sp.get_piece_size()
 
-    def encode(self, text):
-        return self.sp.encode(text, out_type=int)
+    def encode(self, text, alpha=0.0):
+        """One text or a list. alpha above zero samples a segmentation instead of taking the best one,
+        and lower values sample more freely. One thread, so a seed gives the same result every time."""
+        if not alpha:
+            return self.sp.encode(text, out_type=int)
+        return self.sp.encode(text, out_type=int, enable_sampling=True, alpha=alpha, nbest_size=-1, num_threads=1)
 
     def decode(self, ids):
         return self.sp.decode([i for i in ids if i > UNK])

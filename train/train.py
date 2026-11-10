@@ -10,17 +10,18 @@ import json
 import random
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
+import sentencepiece
 from mlx.utils import tree_flatten, tree_unflatten
 
-from train.evaluate import Evaluator, validation_scorer
+from train.evaluate import Evaluator, average_checkpoints, load_checkpoint, outside_scorer, validation_scorer
 from train.model import CONFIGS, Config, Translator
-from train.tokenizer import BOS, EOS, PAD, Tokenizer
+from train.tokenizer import BOS, EOS, PAD, UNK, WORDS, Tokenizer
 
 BUCKETS = (16, 32, 48, 64, 96, 128)  # fixed shapes, because mx.compile retraces on a new shape
 
@@ -33,17 +34,22 @@ class Settings:
     final_learning_rate: float = 1e-5
     weight_decay: float = 0.01
     label_smoothing: float = 0.1
+    word_dropout: float = 0.0
+    r_drop: float = 0.0
     clip: float = 1.0
     seed: int = 0
     keep_checkpoints: int = 3
 
 
-def examples_from(rows, tokenizer):
-    """Each pair teaches both directions. Examples over the longest bucket are dropped and counted."""
+def examples_from(rows, tokenizer, alpha=0.0, seed=""):
+    """Each pair teaches both directions. Examples over the longest bucket are dropped and counted.
+    With alpha, every text gets a sampled segmentation that the seed fixes."""
     th, en = tokenizer.marker("<th>"), tokenizer.marker("<en>")
     kept, dropped = [], 0
-    for row in rows:
-        english, thai = tokenizer.encode(row["en"]), tokenizer.encode(row["th"])
+    if alpha:
+        sentencepiece.set_random_generator_seed(random.Random(seed).getrandbits(31))
+    all_english, all_thai = tokenizer.encode([r["en"] for r in rows], alpha), tokenizer.encode([r["th"] for r in rows], alpha)
+    for english, thai in zip(all_english, all_thai):
         for example in (([th, *english, EOS], thai), ([en, *thai, EOS], english)):
             if bucket_of(example) is None:
                 dropped += 1
@@ -81,7 +87,14 @@ def to_arrays(length, batch):
             mx.array([padded([*target, EOS]) for _, target in batch], mx.int32))
 
 
+def drop_words(ids, rate):
+    """Replaces ordinary pieces with the unknown piece at the given rate. Markers and padding stay."""
+    return mx.where((mx.random.uniform(shape=ids.shape) < rate) & (ids >= WORDS), mx.array(UNK, mx.int32), ids)
+
+
 class Trainer:
+    """examples is a list, or a function from the epoch number to that epoch's list."""
+
     def __init__(self, config: Config, examples, out, total_steps, settings=Settings()):
         self.config, self.examples, self.out, self.settings = config, examples, Path(out), settings
         mx.random.seed(settings.seed)
@@ -103,15 +116,27 @@ class Trainer:
 
     def compiled(self):
         def loss_of(model, source, target_in, target_out):
-            logits = model(source, target_in)
             mask = target_out != PAD
-            losses = nn.losses.cross_entropy(logits, target_out, label_smoothing=self.settings.label_smoothing, reduction="none")
-            return (losses * mask).sum() / mask.sum()
+
+            def cross_entropy(logits):
+                losses = nn.losses.cross_entropy(logits, target_out, label_smoothing=self.settings.label_smoothing, reduction="none")
+                return (losses * mask).sum() / mask.sum()
+
+            first = model(source, target_in)
+            if not self.settings.r_drop:
+                return cross_entropy(first)
+            # R-Drop: a second pass with different dropout, and a penalty when the two disagree.
+            second = model(source, target_in)
+            a, b = nn.log_softmax(first, axis=-1), nn.log_softmax(second, axis=-1)
+            disagreement = (((mx.exp(a) - mx.exp(b)) * (a - b)).sum(-1) * mask).sum() / mask.sum() / 2
+            return (cross_entropy(first) + cross_entropy(second)) / 2 + self.settings.r_drop * disagreement
 
         value_and_grad = nn.value_and_grad(self.model, loss_of)
         state = [self.model.state, self.optimizer.state, mx.random.state]
 
         def update(source, target_in, target_out):
+            if self.settings.word_dropout:
+                source, target_in = drop_words(source, self.settings.word_dropout), drop_words(target_in, self.settings.word_dropout)
             loss, grads = value_and_grad(self.model, source, target_in, target_out)
             grads, norm = optim.clip_grad_norm(grads, self.settings.clip)
             self.optimizer.update(self.model, grads)
@@ -158,7 +183,8 @@ class Trainer:
         self.out.mkdir(parents=True, exist_ok=True)
         with (self.out / "log.jsonl").open("a", encoding="utf8") as log:
             while self.step < max_steps:
-                batches = batches_for(self.examples, self.settings.batch_tokens, self.settings.seed, self.epoch)
+                examples = self.examples(self.epoch) if callable(self.examples) else self.examples
+                batches = batches_for(examples, self.settings.batch_tokens, self.settings.seed, self.epoch)
                 if not batches:
                     raise SystemExit("no complete batch: too few examples for batch_tokens")
                 while self.batch < len(batches) and self.step < max_steps:
@@ -196,6 +222,13 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--exclude-subsets", default="", help="comma-separated subsets to leave out of training")
     parser.add_argument("--max-steps", type=int, help="stop early, for benchmarks")
+    # Defaults suit a corpus of a few hundred thousand pairs. Lower dropout and sampling for millions.
+    parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--label-smoothing", type=float, default=0.2)
+    parser.add_argument("--word-dropout", type=float, default=0.1, help="share of pieces replaced with the unknown piece")
+    parser.add_argument("--sampling-alpha", type=float, default=0.2, help="resegment the corpus each epoch, 0 to turn off")
+    parser.add_argument("--batch-tokens", type=int, default=2048)
+    parser.add_argument("--r-drop", type=float, default=0.0, help="weight of the R-Drop penalty, 0 for off. Doubles the work per step")
     args = parser.parse_args()
     mx.set_cache_limit(2 * 2**30)  # saves about 8 GB and stops swap growing, at no real cost in speed
     wanted = set(args.sources.split(","))
@@ -203,16 +236,27 @@ def main():
     excluded = set(filter(None, args.exclude_subsets.split(",")))
     rows = [r for r in rows if r["source"] in wanted and r["subset"] not in excluded]
     tokenizer = Tokenizer()
-    examples, dropped = examples_from(rows, tokenizer)
-    settings = Settings(seed=args.seed)
-    per_epoch = len(batches_for(examples, settings.batch_tokens, settings.seed, 0))
+
+    def epoch_examples(epoch):
+        return examples_from(rows, tokenizer, alpha=args.sampling_alpha, seed=f"{args.seed}-{epoch}")
+
+    examples, dropped = epoch_examples(0)
+    settings = Settings(seed=args.seed, batch_tokens=args.batch_tokens, label_smoothing=args.label_smoothing, word_dropout=args.word_dropout, r_drop=args.r_drop, keep_checkpoints=5)
+    per_epoch = len(batches_for(examples, settings.batch_tokens, settings.seed, 0))  # later epochs differ a little when sampling
     total = per_epoch * args.epochs
-    trainer = Trainer(CONFIGS[args.config], examples, args.out, total, settings)
+    trainer = Trainer(replace(CONFIGS[args.config], dropout=args.dropout), (lambda epoch: epoch_examples(epoch)[0]) if args.sampling_alpha else examples, args.out, total, settings)
     validation = [json.loads(line) for line in Path("data/public/corpus/validation.jsonl").read_text(encoding="utf8").splitlines()]
-    evaluator = Evaluator(args.out, validation_scorer(validation, tokenizer))  # every run is scored on the same rows
+    score = validation_scorer(validation, tokenizer)  # every run is scored on the same rows
+    other = Path("data/public/train.jsonl")  # news, textbook and everyday sentences that no run trains on
+    if other.exists():
+        validation_score, outside = score, outside_scorer(other, tokenizer, {r["en"] for r in rows})
+        score = lambda model: {**validation_score(model), **outside(model)}
     print(json.dumps({"pairs": len(rows), "examples": len(examples), "too_long": dropped, "batches_per_epoch": per_epoch, "total_steps": total, "resuming_at": trainer.step}), flush=True)
-    losses = trainer.run(args.max_steps or total, evaluate=evaluator, evaluate_every=max(1, per_epoch // 2))
+    losses = trainer.run(args.max_steps or total, evaluate=Evaluator(args.out, score), evaluate_every=max(1, per_epoch // 2))
     print(json.dumps({"step": trainer.step, "last_loss": round(losses[-1], 4) if losses else None}))
+    saved = trainer.checkpoints()
+    if len(saved) > 1:  # the mean of the last few checkpoints often beats any one of them
+        print(json.dumps({"averaged": len(saved), **score(load_checkpoint(average_checkpoints(saved, Path(args.out) / "averaged")))}), flush=True)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ class Config:
 CONFIGS = {
     "full": Config(vocab=32000, dim=1024, heads=16, feed_forward=4096, layers=9),
     "baseline": Config(vocab=32000, dim=512, heads=8, feed_forward=2048, layers=8),
+    "probe": Config(vocab=32000, dim=256, heads=4, feed_forward=1024, layers=6),  # about 19M, for quick comparisons
 }
 
 

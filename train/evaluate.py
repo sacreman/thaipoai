@@ -68,6 +68,39 @@ def validation_scorer(rows, tokenizer):
     return score
 
 
+def outside_pairs(path, tokenizer, trained_english, per_origin=300, longest=100):
+    """The same few hundred (origin, English, Thai) pairs from each origin in the file every time,
+    leaving out pairs whose English is in the training data and pairs too long for the model."""
+    by_origin = collections.defaultdict(dict)
+    for line in Path(path).read_text(encoding="utf8").splitlines():
+        r = json.loads(line)
+        if r["target_lang"] == "Thai" and r["source"] not in trained_english:
+            by_origin[r["origin"]][r["source"]] = r["target"]
+    chosen = []
+    for origin, pairs in sorted(by_origin.items()):
+        fits = [(en, th) for en, th in sorted(pairs.items()) if max(len(tokenizer.encode(en)), len(tokenizer.encode(th))) <= longest]
+        chosen += [(origin, en, th) for en, th in random.Random(5).sample(fits, min(per_origin, len(fits)))]
+    return chosen
+
+
+def outside_scorer(path, tokenizer, trained_english):
+    """Scores a model on text unlike its training data (news, a textbook, everyday sentences), both
+    ways. Reported beside the validation score and never used to pick a checkpoint."""
+    sources, references, groups = [], [], {}
+    for origin, en, th in outside_pairs(path, tokenizer, trained_english):
+        groups.setdefault(origin, []).extend((len(sources), len(sources) + 1))
+        sources += [encoded(tokenizer, en, "th"), encoded(tokenizer, th, "en")]
+        references += [th, en]
+
+    def score(model):
+        hypotheses = [tokenizer.decode(ids) for ids in model.translate(sources)]
+        pick = lambda items, indexes: [items[i] for i in indexes]
+        scores = {f"outside_{origin}": round(chrf(pick(hypotheses, idx), pick(references, idx)), 2) for origin, idx in groups.items()}
+        return {"outside": round(sum(scores.values()) / max(1, len(scores)), 2), **scores}
+
+    return score
+
+
 class Evaluator:
     """Called at each scoring point. Keeps the best checkpoint and says when progress has stopped."""
 
@@ -111,6 +144,19 @@ def load_checkpoint(path):
     model.load_weights(str(path / "model.safetensors"))
     mx.eval(model.parameters())
     return model
+
+
+def average_checkpoints(paths, out):
+    """Writes the mean of the checkpoints' weights as a checkpoint load_checkpoint can read."""
+    total = None
+    for path in paths:
+        weights = mx.load(str(Path(path) / "model.safetensors"))
+        total = weights if total is None else {name: total[name] + value for name, value in weights.items()}
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    mx.save_safetensors(str(out / "model.safetensors"), {name: value / len(paths) for name, value in total.items()})
+    shutil.copy(Path(paths[-1]) / "meta.json", out / "meta.json")
+    return out
 
 
 def translate_suite(checkpoint, suite, out, system):
