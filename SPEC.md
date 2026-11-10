@@ -193,7 +193,7 @@ training time and operating cost.
 - Jev's three-vote majority for meaning (`evaluation/compare_systems.py`), paired on discordant cases
   with a one-sided 95% upper bound.
 
-**During training**, every half epoch scores chrF on a fixed 2,000-row validation sample, both ways,
+**During training**, every half epoch scores chrF on the same 2,000-row validation sample for every run, both ways,
 per direction and per source. Training keeps the best checkpoint and stops after three scores without
 a gain of at least 0.1 (`train/evaluate.py`). The test split is not touched. Suites hold intended
 meanings, not reference translations, so they are judged by Jev on the best checkpoint.

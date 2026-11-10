@@ -193,20 +193,23 @@ def main():
     parser.add_argument("--sources", required=True, help="comma-separated: scb,mtop,massive")
     parser.add_argument("--out", required=True)
     parser.add_argument("--epochs", type=int, default=8)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--exclude-subsets", default="", help="comma-separated subsets to leave out of training")
     parser.add_argument("--max-steps", type=int, help="stop early, for benchmarks")
     args = parser.parse_args()
     mx.set_cache_limit(2 * 2**30)  # saves about 8 GB and stops swap growing, at no real cost in speed
     wanted = set(args.sources.split(","))
     rows = [json.loads(line) for line in Path("data/public/corpus/train.jsonl").read_text(encoding="utf8").splitlines()]
-    rows = [r for r in rows if r["source"] in wanted]
+    excluded = set(filter(None, args.exclude_subsets.split(",")))
+    rows = [r for r in rows if r["source"] in wanted and r["subset"] not in excluded]
     tokenizer = Tokenizer()
     examples, dropped = examples_from(rows, tokenizer)
-    settings = Settings()
+    settings = Settings(seed=args.seed)
     per_epoch = len(batches_for(examples, settings.batch_tokens, settings.seed, 0))
     total = per_epoch * args.epochs
     trainer = Trainer(CONFIGS[args.config], examples, args.out, total, settings)
     validation = [json.loads(line) for line in Path("data/public/corpus/validation.jsonl").read_text(encoding="utf8").splitlines()]
-    evaluator = Evaluator(args.out, validation_scorer([r for r in validation if r["source"] in wanted], tokenizer))
+    evaluator = Evaluator(args.out, validation_scorer(validation, tokenizer))  # every run is scored on the same rows
     print(json.dumps({"pairs": len(rows), "examples": len(examples), "too_long": dropped, "batches_per_epoch": per_epoch, "total_steps": total, "resuming_at": trainer.step}), flush=True)
     losses = trainer.run(args.max_steps or total, evaluate=evaluator, evaluate_every=max(1, per_epoch // 2))
     print(json.dumps({"step": trainer.step, "last_loss": round(losses[-1], 4) if losses else None}))
