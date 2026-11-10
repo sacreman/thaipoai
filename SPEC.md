@@ -1,6 +1,6 @@
 # ThaiPoAI: a Thai-English translator trained from scratch
 
-Version 8.0, 9 November 2026. Personal open-source project by Steven Acreman.
+Version 8.2, 10 November 2026. Personal open-source project by Steven Acreman.
 Public repository `sacreman/thaipoai`. Code is Apache-2.0. The weights' licence follows the
 training data (section 4.4).
 
@@ -152,15 +152,32 @@ safest option. A licence on the weights cannot fix unknown source rights.
 
 ### 4.5 App data
 
-The two chat applications hold about 300,000 pairs produced by the DeepSeek workflow. Provenance must
-be separable into raw model output, automatically corrected and genuinely human-reviewed rows.
+**This project trains on public data only.** No ThaiPo conversation, and nothing derived from one, is
+in this repository, in a corpus release or in the published weights. The corpus build stops on any
+source that is not registered with a licence (section 4.2), which keeps it that way.
 
-**App conversations are not used for training, or sent to outside reviewers, until each message in
-the row and its context has its sender's own recorded consent covering publication of the weights.**
-The build refuses without a consent manifest. Contact details and names become typed placeholders
-first, and `cmd/extract-audit` gates any release. The dataset is never published.
+The operator of ThaiPo may separately adapt a private copy of the model to its own conversations.
+That work is outside this project. Its data and weights are not published, and no result reported
+here depends on it.
+
+Anyone adapting the model to personal text should replace contact details and names with typed
+placeholders first, and pass `cmd/extract-audit` before the model serves anyone.
 
 ---
+
+### 4.6 Distilled corpus
+
+The human-translated mix covers commands, reviews and task dialogue, and a model trained on it is 25
+to 33 chrF behind the teacher on anything else (measured 10 November). A second corpus closes that
+gap: English and Thai sentences from openly licensed sources, cleaned, translated once by DeepSeek
+Flash, and published as a versioned release with the model name, prompt, settings and date.
+[`docs/distillation-plan.md`](docs/distillation-plan.md) holds the plan: the source rule, the audit of
+every source, the cleaning rules, how the rows are bought and filtered, and what other work shows.
+
+The source rule is the one in section 4.2, applied to the text itself: the licence must allow
+commercial use, redistribution and derived works, and must come from whoever holds the rights. Web
+crawls and scraped collections stay out. A teacher is used only where its terms allow training on its
+output.
 
 ## 5. Evaluation
 
@@ -173,7 +190,6 @@ Build the evaluation sets first, and keep them out of training.
 | `suites/golden` | Must-pass cases for the rollout gate |
 | FLORES+ | Public benchmark |
 | Commissioned Thai-written chat | Held-out conversational test (section 4.3) |
-| App conversations | Held-out real-chat test, once section 4.5 is met |
 
 Training data never contains a suite message: every row whose normalised source appears in any
 suite is dropped when the corpus is built. A few short public sentences match today.
@@ -215,9 +231,9 @@ A step is done when it **runs for real, has a test that fails if it breaks, has 
 4. Benchmark the laptop: several hundred representative steps, measuring GPU use, memory and
    sustained throughput, before estimating a full run. Measured, awaiting approval.
 5. Train on selected public data. Evaluate checkpoints regularly and use measured progress to decide
-   whether more training is worth it.
-6. Adapt to application data, emphasising verified corrections, conversational language and
-   terminology. Requires section 4.5.
+   whether more training is worth it. The human-translated mix is trained; the distilled corpus
+   (section 4.6) is being built, and is bought in steps that continue only while the score climbs.
+6. Removed. Adapting to application data is outside this project (section 4.5).
 7. Compare against the production system, each direction separately.
 
 ---
@@ -251,7 +267,7 @@ claims about it say so.
 |---|---|
 | "Trained from random initialisation in MLX on a laptop" | "Better than DeepSeek" unscoped |
 | "Within X points of production on this held-out set, this date" | "Human-validated" without a human review |
-| The exact data mix, with licences | "Trained on real conversations with consent" without the manifest |
+| The exact data mix, with licences | "Trained on real conversations": the published model is not |
 | "Built with AI coding agents, designed and reviewed by me" | Implying it was hand-typed |
 
 **Out of scope:** impersonation, romance or recruitment scams, safety, legal or medical translation
@@ -265,7 +281,7 @@ without human review.
 cmd/{gateway,rollout-controller,fake-model,suite,extract-audit}
 internal/{guards,llm,rollout}  deploy/{crd.yaml,Dockerfile,kind}
 train/  evaluation/  suites/  data/{synthetic-chat-v1/,massive-th-verified.json}  tests/
-docs/{pretrained-experiments.md,data-sources.md,rollout-states.md,extract-audit.md,steps/}
+docs/{pretrained-experiments.md,data-sources.md,distillation-plan.md,rollout-states.md,extract-audit.md,steps/}
 ```
 
 ## Sources

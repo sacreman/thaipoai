@@ -24,8 +24,8 @@ flowchart LR
 | 2 | Build the evaluation sets first | Corpus held-out splits and suites ready. FLORES+ pending |
 | 3 | Prove training works: overfit, all weights move, exact resume | Built, awaiting review |
 | 4 | Benchmark the laptop over several hundred real steps | Measured, awaiting review |
-| 5 | Train on public data, evaluating checkpoints as it goes | Next |
-| 6 | Adapt to application data, once consent records exist | Blocked |
+| 5 | Train on public data, evaluating checkpoints as it goes | Human-translated mix trained. Distilled corpus being built ([plan](docs/distillation-plan.md)) |
+| 6 | Adapt to application data | Removed: public data only ([SPEC 4.5](SPEC.md)) |
 | 7 | Compare with the production system, per direction | |
 
 ## What's here
@@ -34,6 +34,7 @@ flowchart LR
 |---|---|
 | [`SPEC.md`](SPEC.md) | The experiment: model, data, evaluation, sequence |
 | [`train/`](train) | Source registry, corpus builder and release packager, tokenizer, Transformer and MLX trainer |
+| [`docs/distillation-plan.md`](docs/distillation-plan.md) | Plan for the distilled corpus: sources, audit, cleaning rules, scores to beat |
 | [`evaluation/`](evaluation) | Paired comparison, meaning judge, suite drafting, baseline run |
 | [`suites/`](suites) | Synthetic test cases with intended meanings |
 | [`data/`](data) | Synthetic chat pairs and the MASSIVE rows that passed a meaning check |
