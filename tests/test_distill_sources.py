@@ -259,13 +259,13 @@ def test_dialogue_formats(raw):
     write(raw / "abcd/abcd_v1.1.json.gz", json.dumps({"train": [{"convo_id": 3, "original": [
         ["agent", "How can I help?"], ["action", "Searching the FAQ pages ..."], ["customer", "My order is late."]]}]}), gzip.open)
     assert list(d.abcd()) == [("abcd-3-2", "My order is late.", "en", "How can I help?")]  # the customer's side, the agent's as context
-    write(raw / "byu/dataset.json", json.dumps({"c1": {"messages": [[{"text": "hey", "sender": "a"}, {"text": "you there?", "sender": "a"}], [{"text": "yep", "sender": "b"}, {"text": "The purple elephant danced gracefully.", "sender": "b"}]]}}))
-    assert [r[:2] + r[3:] for r in d.byu()] == [("byu-c1-0", "hey you there?", None), ("byu-c1-1", "yep", "hey you there?")]  # one person's run of messages is one line
+    write(raw / "byu/dataset.json", json.dumps({"c1": {"messages": [[{"text": "hey", "sender": "a"}, {"text": "you there?", "sender": "a"}], [{"text": "yep", "sender": "b"}, {"text": "The purple elephant danced gracefully.", "sender": "b"}, {"text": "h e l l o", "sender": "b"}]]}}))
+    assert [r[:2] + r[3:] for r in d.byu()] == [("byu-c1-0-0", "hey", None), ("byu-c1-0-1", "you there?", "hey"), ("byu-c1-1-0", "yep", "you there?")]  # one message a row; planted and letter-spaced lines go
     assert d.frame("Book a table at Nopa for 7 pm, I think") == d.frame("Book a table at Zuni for 8 pm, I think") != d.frame("Book a room at Nopa for 7 pm")
 
 
 def test_question_and_answer_formats(raw):
-    write(raw / "dolly/databricks-dolly-15k.jsonl", "".join(json.dumps({"instruction": q, "context": "Left out.", "response": "Left out too."}) + "\n"
+    write(raw / "dolly/databricks-dolly-15k.jsonl", "".join(json.dumps({"instruction": q, "context": "Has a passage." if "moon" in q else "", "response": "Left out too."}) + "\n"
                                                              for q in ("Which fruit is red?", "Name a fruit.", "What is the main idea of the paragraph?")))
     assert [r[1] for r in d.dolly()] == ["Which fruit is red?"]  # questions only, and not about a text that is not here
     write(raw / "commonvoice/en-wiki.en.txt", "They moved to the city in the spring of that year.\nShort line.\nThe river runs through the old town to the sea.\n"
@@ -286,17 +286,17 @@ def test_parquet_formats(raw):
         pq.write_table(pa.Table.from_pylist(rows), raw / path)
 
     for split in ("train", "valid", "test"):
-        table(f"soda/{split}.parquet", [{"dialogue": ["Hi there!", "Hello."], "original_index": 8}, {"dialogue": ["Skipped."], "original_index": 9}])
-    assert list(d.soda())[:2] == [("soda-8-0", "Hi there!", "en", None), ("soda-8-1", "Hello.", "en", "Hi there!")] and len(list(d.soda())) == 6
+        table(f"soda/{split}.parquet", [{"dialogue": ["Hi there!", "I was hoping to find you here today.", "*smiles* Me too."], "original_index": 8}, {"dialogue": ["Skipped."], "original_index": 9}])
+    assert list(d.soda())[:1] == [("soda-8-1", "I was hoping to find you here today.", "en", "Hi there!")] and len(list(d.soda())) == 3  # greetings and stage directions go
     table("blognone/train.parquet", [{"title": "t", "author": "a", "content": f"{POST}\n\n- รายการสั้น\n\nหัวข้อย่อย\n\nที่มา - สำนักข่าว"}])
     assert list(d.blognone()) == [("blognone-0-0", POST, "th", None)]  # list items, headings and the source line go
-    table("iapp/train.parquet", [{"question_id": "q_000", "question": "ใครเป็นผู้คิดค้นหลอดไฟ", "context": "ไม่ใช้"}])
-    assert list(d.iapp()) == [("iapp-q_000", "ใครเป็นผู้คิดค้นหลอดไฟ", "th")]
+    table("iapp/train.parquet", [{"question_id": "q_000", "question": "ใครเป็นผู้คิดค้นหลอดไฟฟ้าเป็นคนแรกของโลก", "context": "ไม่ใช้"}])
+    assert list(d.iapp()) == [("iapp-q_000", "ใครเป็นผู้คิดค้นหลอดไฟฟ้าเป็นคนแรกของโลก", "th")]
 
 
 def test_every_source_is_pinned_and_capped_sources_are_the_repetitive_ones():
     take = {s.name: s.take for s in d.SOURCES}
-    assert {n for n, t in take.items() if t} == {"soda", "tatoeba_en", "iapp", "thailaw"}
+    assert {n for n, t in take.items() if t} == {"soda", "tatoeba_en", "thailaw"}
     assert take["soda"] == take["tatoeba_en"] == 100_000 and set(d.PINS) == set(d.downloads())
 
 
@@ -425,7 +425,9 @@ def test_thai_prose_carries_the_sentence_before_and_long_paragraphs_go_to_their_
     assert d.reject("ในแถลงการณ์เมื่อเดือนสิงหาคม กระทรวงต่างประเทศจีนระบุว่า รัฐบาลอเมริกัน", "th", news) == "unfinished"
     assert d.reject("กระทรวงต่างประเทศจีนระบุว่า รัฐบาลอเมริกันควรยกเลิกมาตรการภาษีนำเข้าสินค้าทั้งหมดโดยเร็ว", "th", news) is None
     para = d.Source("para", "Para", "news", "CC0 1.0", "", "", "", None, None, prose=True, **d.PARAGRAPH)
-    long_row = "รัฐบาลประกาศมาตรการใหม่เพื่อช่วยเหลือเกษตรกรที่ได้รับผลกระทบจากภัยแล้งในปีนี้ " * 4
+    long_row = ("รัฐบาลประกาศมาตรการใหม่เพื่อช่วยเหลือเกษตรกรที่ได้รับผลกระทบจากภัยแล้งในปีนี้ โดยกระทรวงการคลังจะจัดสรรเงินกู้ดอกเบี้ยต่ำผ่านธนาคารของรัฐ "
+                "ขณะที่กรมชลประทานเร่งขุดลอกคลองส่งน้ำในพื้นที่ภาคตะวันออกเฉียงเหนือ และหน่วยงานท้องถิ่นได้รับมอบหมายให้สำรวจความเสียหายของพืชผลภายในสิ้นเดือน")
+    assert d.stutters("เขาเดินทางไปยังเมืองหลวง เดินทางไปยังเมืองหลวงในปีถัดมา") and not d.stutters("มหาวิทยาลัยเชียงใหม่ก่อตั้งขึ้นก่อน และต่อมามหาวิทยาลัยเชียงใหม่ได้ขยายวิทยาเขต")
     assert d.reject(long_row.strip(), "th", PROSE) == "too long" and d.reject(long_row.strip(), "th", para) is None
 
 
@@ -507,4 +509,25 @@ def test_a_forward_only_source_marks_every_row_and_the_manifest(tmp_path, monkey
 def test_thai_wikipedia_is_forward_only_and_its_paragraphs_are_not_taken():
     by_name = {s.name: s for s in d.SOURCES}
     assert by_name["thwiki"].use == "forward_only" and [s.name for s in d.SOURCES if s.use] == ["thwiki"]
-    assert by_name["thwiki_para"].take == by_name["yodas"].take == by_name["lotusdis"].take == 0
+    assert by_name["thwiki_para"].take == by_name["yodas"].take == by_name["lotusdis"].take == by_name["iapp"].take == 0
+
+
+def test_tidy_pass_rules(raw):
+    assert d.GV_ASIDE.search("Photo by Jane Doe, used under a CC BY 2.0 licence and published on the site in March.")
+    assert d.GV_ASIDE.search("The protest was covered widely by local bloggers and by the national press (RUS) all week long.")
+    assert not d.GV_ASIDE.search("The protest was covered widely by local bloggers and by the national press all week long.")
+    assert d.without_values("I want to fly to san francisco please.", {"san francisco"}) == "I want to fly to Xx please."
+    assert d.frame("book a table for two on friday at seven") == d.frame("book a table for six on monday at nine")
+    named = d.Source("names", "N", "everyday", "MIT", "", "", "", None, None, name_cap=1)
+    talk = d.Source("talk", "T", "task dialogue", "MIT", "", "", "", None, None, dialogue=True, frames=True)
+    counts = collections.Counter()
+    kept = d.sift(named, [("a", "Yanni bought a new car last week.", "en"), ("b", "Yanni sold his old house in May.", "en"), ("c", "The weather was fine all day.", "en"), ("e", "The train left early this morning.", "en")],
+                  lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), counts)
+    assert [r["id"] for r in kept] == ["a", "c", "e"] and counts == {"repeated name": 1}
+    lines = ["I need a cheap hotel in the north.", "Something with free parking would be best.", "A guesthouse would also be fine with me."]
+    kept = d.sift(talk, [(str(i), t, "en", "How can I help you today?") for i, t in enumerate(lines)], lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), counts)
+    assert len(kept) == d.PREVIOUS_CAP and counts["repeated previous line"] == 1
+    first = "พระองค์ทรงเป็นพระราชโอรสองค์ที่สองของกษัตริย์แห่งอาณาจักรทางตอนเหนือ"
+    rows = [("a", "เขาเริ่มทำงานเป็นครูสอนภาษาที่โรงเรียนประจำจังหวัดเมื่ออายุได้ยี่สิบปี", "th", None), ("b", "เขาเริ่มทำงานเป็นวิศวกรที่โรงงานผลิตรถยนต์ในกรุงเทพเมื่ออายุได้ยี่สิบสองปี", "th", "สมชายเกิดที่จังหวัดเชียงใหม่ในครอบครัวชาวนา")]
+    kept = d.sift(PROSE, rows, lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), counts)
+    assert [r["id"] for r in kept] == ["b"] and counts["subject in the row before"] == 1  # "he ..." with no sentence before it

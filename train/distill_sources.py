@@ -44,6 +44,7 @@ MAX_CHARS = {"en": 300, "th": 250}
 # takes 1.3 times the pieces of its Thai, and up to 2 times for one pair in twenty, so Thai gets the tighter limit.
 MAX_PIECES = {"en": 100, "th": 64}
 OPENER_WORDS = 3
+PREVIOUS_CAP = 2  # most task-dialogue rows that may answer the very same previous line
 FRAME_CAP = 5  # most rows a task dialogue may give for one frame, once names, dates, numbers and slot values are masked
 MAX_CONTEXT = 200  # characters of the previous turn carried with a dialogue row, and twice that of the sentence before a prose row
 PER_MESSAGE = 8  # sentences taken from one question-and-answer message
@@ -135,6 +136,13 @@ SPOKEN_LEANS = re.compile(f"(?!แต่|ก็|แล้ว|เพราะ)(?:
 # Also editors' notes to each other, and a paragraph that points at numbered items of a list that is not there.
 THAI_HOLE = re.compile("ที่ใน(?!อดีต|ปัจจุบัน|ขณะ|ปี|ช่วง|เวลา|ตอน|ภายหลัง|ที่สุด|วัน|สมัย|ยุค|ระหว่าง|บาง|หลาย|ทาง|ตัว|ส่วน|เดือน|ครั้ง)|จาก ใน|โดยมีเป็น|โดยที่ คือ"
                        r"|(?:รายการ|วารสาร|หนังสือพิมพ์|นิตยสาร|ชื่อ|ชื่อว่า|เรียกว่า) (?:ของ|และ|ที่(?!อยู่)|ว่า|ซึ่ง)|ลงในบทความ|ควรตรวจสอบ|\(\d{1,2}\)")
+THAI_NEEDS_SUBJECT = re.compile("ได้รับ|ทรง|ยัง|จึง|พระนาง|พระองค์|เขา(?!ต)|เธอ")  # with no sentence before, nobody knows who
+# Words that begin an English sentence without being anybody's name.
+COMMON_STARTS = frozenset("""i the a an he she it we they you this that these those there here what who where when why how which do does did is are was
+were can could will would should may might must have has had my your his her our their its if in on at for to from with as and but or so not no yes let please all some
+many most every each both one two three after before since because although while even just only never always sometimes nobody everyone everybody someone somebody
+something nothing everything anything people mr mrs dr now then today yesterday tomorrow maybe perhaps of by about during without until once any another such
+nobody neither either few several much more less than too very really also still again""".split())
 BRACKETED = re.compile(r"\([^()]*\)")
 # Notes, timeline entries ("พ.ศ. 2546 จัดทำป้อมยามใหม่") and labelled lines ("ภาษาอังกฤษ : ...") are list items, not prose.
 THAI_NOTE = re.compile(r"หมายเหตุ|(?:พ\.ศ\.|ค\.ศ\.) ?\d{4}|.{0,40} : ")
@@ -145,7 +153,7 @@ BIOGRAPHY_LEAD = re.compile(r"[^()]{3,60} \([^)]*\d{3,4}[^)]*\) (?:is|was) an? "
 FOOTBALLER = re.compile(r"(?i)\b(?:footballer|football player|soccer player)\b|\b(?:plays|played) (?:for|as a)\b|\bnational (?:football )?team\b")
 # The line before asks who the customer is: what follows is an invented identity.
 ASKS_IDENTITY = re.compile(r"(?i)\b(?:name|pin|zip|phone|e-?mail|username|order id|account id|address)\b")
-MONTHS = re.compile(r"(?i)\b(?:january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec|mon|tues?|wed|thur?s?|fri|sat|sun|am|pm|a\.m\.|p\.m\.)\b")
+MONTHS = re.compile(r"(?i)\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a couple of|january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec|mon|tues?|wed|thur?s?|fri|sat|sun|am|pm|a\.m\.|p\.m\.)\b")
 THAI_MIN = 30  # characters a Thai sentence needs before it may end
 
 
@@ -297,35 +305,61 @@ def tatoeba(path, lang, cc0=None, min_words=0):
                 yield f"tatoeba-{number}", text, lang
 
 
+def slot_values(turn, text):
+    """What the dataset marks as a slot value in or beside this turn: a city, a time, a film."""
+    for f in turn.get("frames", []):
+        for slot in f.get("slots", []):
+            if "start" in slot:
+                yield text[slot["start"]:slot["exclusive_end"]]
+            yield from (v for v in ([slot["value"]] if isinstance(slot.get("value"), str) else slot.get("value") or []))
+        for values in f.get("state", {}).get("slot_values", {}).values():
+            yield from values
+    for segment in turn.get("segments", []):
+        yield segment.get("text") or text[segment["start_index"]:segment["end_index"]]
+
+
+def without_values(shape, values):
+    """shape with every run of up to six words that is one of the dataset's slot values masked."""
+    words, out, i = shape.split(), [], 0
+    while i < len(words):
+        n = next((n for n in range(min(6, len(words) - i), 0, -1) if " ".join(words[i:i + n]).strip(".,!?").casefold() in values), 0)
+        out.append("Xx" if n else words[i])
+        i += n or 1
+    return " ".join(out)
+
+
 def turns(name, files, list_key="turns", text_key="utterance"):
-    """Task dialogues: a JSON list of dialogues, each a list of turns. files is (label, open file) pairs.
+    """Task dialogues: a JSON list of dialogues, each a list of turns. files() gives (label, open file) pairs.
     Only what the user said is taken, with the turn before it as context: the system's side is written from
-    templates. The fifth value is the turn with its slot values masked, for the frame cap."""
-    for label, handle in files:
+    templates. The fifth value is the turn with its slot values masked, for the frame cap: the values the
+    dataset marks in this turn, and any value it marks anywhere, so "to Boston" is masked in a turn nobody
+    annotated. The files are read twice, once to collect those values."""
+    values = {v.casefold() for _, handle in files() for dialogue in json.load(handle) for turn in dialogue[list_key]
+              for v in slot_values(turn, turn[text_key]) if len(v) >= 3}
+    for label, handle in files():
         for d, dialogue in enumerate(json.load(handle)):
             previous = None
             for t, turn in enumerate(dialogue[list_key]):
                 text = turn[text_key]
                 if turn["speaker"].upper() == "USER":
-                    # The datasets mark where each slot value sits (a city, a time, a film). Masking those gives the frame.
                     spans = [(s["start"], s["exclusive_end"]) for f in turn.get("frames", []) for s in f.get("slots", []) if "start" in s]
                     spans += [(s["start_index"], s["end_index"]) for s in turn.get("segments", [])]
                     shape = text
                     for start, end in sorted(set(spans), reverse=True):
                         shape = shape[:start] + "Xx" + shape[end:]
-                    yield f"{name}-{label}-{d}-{t}", text, "en", previous, shape
+                    yield f"{name}-{label}-{d}-{t}", text, "en", previous, without_values(shape, values)
                 previous = text
 
 
 def sgd(path="sgd/sgd.zip"):
     with zipfile.ZipFile(RAW / path) as archive:
         names = sorted(n for n in archive.namelist() if re.search(r"/(train|dev|test)/dialogues_\d+\.json$", n))
-        yield from turns("sgd", ((re.sub(r".*/(\w+)/dialogues_(\d+)\.json", r"\1\2", n), archive.open(n)) for n in names))
+        yield from turns("sgd", lambda: ((re.sub(r".*/(\w+)/dialogues_(\d+)\.json", r"\1\2", n), archive.open(n)) for n in names))
 
 
 def plain_files(name, pattern, **keys):
     paths = sorted((RAW / name).glob(pattern))
-    yield from turns(name, ((p.stem, open(p, encoding="utf8")) for p in paths), **keys)
+    yield from turns(name, lambda: ((p.stem, open(p, encoding="utf8")) for p in paths), **keys)
 
 
 def abcd(path="abcd/abcd_v1.1.json.gz"):
@@ -341,16 +375,25 @@ def abcd(path="abcd/abcd_v1.1.json.gz"):
                         previous = text
 
 
+LETTER_SPACED = re.compile(r"\b(?:\w ){3,}\w\b")  # "h e l l o"
+
+
 def byu(path="byu/dataset.json"):
-    """Informal chat. People send one thought as several short messages, so the messages one person sent in a
-    row are joined into one utterance, and what the other person said just before goes along as context."""
+    """Informal chat, one message a row, with the message before it in the conversation as context. Messages
+    spelled out a letter at a time are left out, and so are the test lines the organisers planted."""
     with raw(path) as handle:
         for conversation, body in json.load(handle).items():
             previous = None
             for t, turn in enumerate(body["messages"]):
-                text = " ".join(m["text"].strip() for m in turn if not BYU_INJECTED.match(m["text"].strip()))  # test lines the organisers planted
-                yield f"byu-{conversation}-{t}", text, "en", previous
-                previous = text
+                for k, message in enumerate(turn):
+                    text = message["text"].strip()
+                    if not BYU_INJECTED.match(text) and not LETTER_SPACED.search(text):
+                        yield f"byu-{conversation}-{t}-{k}", text, "en", previous
+                        previous = text
+
+
+# Stage directions the model wrote into a turn, and short turns that only greet or thank.
+SODA_SKIP = re.compile(r"\([^)]*\)|\*[^*]+\*|^(?:Hi|Hey|Thank you|Thanks|You're welcome)\b(?:\W+\w+){0,7}\W*$")
 
 
 def soda(every=4):
@@ -363,19 +406,21 @@ def soda(every=4):
             for dialogue, index in zip(batch["dialogue"].to_pylist(), batch["original_index"].to_pylist()):
                 if index % every == 0:
                     for t, text in enumerate(dialogue):
-                        yield f"soda-{index}-{t}", text, "en", dialogue[t - 1] if t else None
+                        if not SODA_SKIP.search(text):
+                            yield f"soda-{index}-{t}", text, "en", dialogue[t - 1] if t else None
 
 
 REFERS = re.compile(r"(?i)\b(?:reference text|paragraph|passage|the text|below|above|following|given|summary)\b")
 
 
 def dolly(path="dolly/databricks-dolly-15k.jsonl"):
-    """The questions people wrote, unless they ask about a text that is not here. The answers and the context
-    field (Wikipedia excerpts) are left out."""
+    """The questions people wrote, unless they ask about a text that is not here: a record with a context
+    field (a Wikipedia excerpt) gives nothing. The answers are left out, and so is a question typed with no capital."""
     with raw(path) as lines:
         for i, line in enumerate(lines):
-            for n, sentence in enumerate(sentences(json.loads(line)["instruction"], "en")):
-                if sentence.endswith("?") and not REFERS.search(sentence):
+            record = json.loads(line)
+            for n, sentence in enumerate(() if record["context"].strip() else sentences(record["instruction"], "en")):
+                if sentence.endswith("?") and not sentence[0].islower() and not REFERS.search(sentence):
                     yield f"dolly-{i}-{n}", sentence, "en"
 
 
@@ -534,6 +579,12 @@ def wiki(name, lang, per_page=None, must_contain=""):
                         yield f"{name}-{page_id}-{n}", sentence, lang
 
 
+# Captions and credits, a link's language tag such as (RUS), and openers that point at a picture or a link.
+GV_ASIDE = re.compile(r"^(?:[A-Z]{1,4}:|(?:Image|Photo|Photograph|Picture|Screenshot|Cartoon|Video)\b|In it |They are |Check out )"
+                      r"|(?i:\b(?:image|photo|picture|photograph)s? (?:by|from|via|courtesy)\b|\bused under\b|\bCC[ -]BY\b|\boriginal post\b)"
+                      r"|\((?:[A-Z]{2,3})\)|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.?$")
+
+
 def global_voices(path="globalvoices/en.zip"):
     """The site's own sentences. Quoted blog posts and tweets belong to other people and are left out,
     as are picture credits and the speaker labels of interviews.
@@ -554,12 +605,13 @@ def global_voices(path="globalvoices/en.zip"):
             sentences_here = list(own(document))
             for s in sentences_here if len(sentences_here) >= 6 else ():  # shorter posts are one-line digests of other people's blogs
                 text = "".join(s.itertext())
-                if len(text.split()) >= 12 and not re.match(r"\s*(?:[A-Z]{1,4}:|(?:Image|Photo|Photograph|Picture|Screenshot|Cartoon|Video)\b)", text):  # shorter lines are captions and asides
+                if len(text.split()) >= 12 and not GV_ASIDE.search(text.strip()):  # shorter lines are captions and asides
                     yield f"globalvoices-{Path(name).stem}-{s.get('id')}", text, "en"
 
 
 IAPP_ASKS = re.compile("อะไร|ใด|ใคร|ไหน|เท่าไร|เท่าไหร่|กี่|หรือไม่|ไหม|อย่างไร|ยังไง|เมื่อไร|เมื่อไหร่|ทำไม")
-IAPP_POINTS = re.compile("นี้|ดังกล่าว|ในที่นี้|^(?:เธอ|เขา|เกาะ|รายการ|ละคร)|^ในปี .{0,12}(?:เธอ|เขา)")
+# A question that points into its article, has passage text spliced on after its subject, or has no subject.
+IAPP_POINTS = re.compile("นี้|ดังกล่าว|ในที่นี้|^(?:เธอ|เขา|เกาะ|รายการ|ละคร|มี|ได้รับ|ภายใน|ในการ|ต่อมา|พื้นที่)|^ในปี .{0,12}(?:เธอ|เขา)| (?:ซึ่ง|ด้วย|หรือ|ในขณะที่|ปัจจุบัน)")
 WIRE = re.compile(r"รอยเตอร์|เอพี|เอเอฟพี|Reuters|\bAP\b|\bAFP\b|Associated Press|Agence France")
 
 
@@ -595,7 +647,7 @@ def iapp(pattern="iapp/*.parquet"):
     for path in sorted(RAW.glob(pattern)):
         table = pq.read_table(path, columns=["question_id", "question"]).to_pylist()
         for r in table:
-            if IAPP_ASKS.search(r["question"]) and not IAPP_POINTS.search(r["question"]):
+            if len(r["question"].strip()) >= 25 and IAPP_ASKS.search(r["question"]) and not IAPP_POINTS.search(r["question"]):
                 yield f"iapp-{r['question_id']}", r["question"], "th"
 
 
@@ -614,6 +666,7 @@ class Source:
     extract: object
     prose: bool = False  # written text: a sentence starts with a capital and ends with a full stop
     opener_cap: int = 0  # most rows that may start with the same few words
+    name_cap: int = 0  # most rows that may start with the same name ("Tom ...", "Yanni ...")
     dialogue: bool = False  # rows carry the turn before them, and one that leans on it and has none is dropped
     frames: bool = False  # a task dialogue: capped per masked frame, closings and recogniser garble dropped
     asked: bool = False  # questions and answers written to or for an assistant: instructions and chatbot voice go
@@ -639,9 +692,8 @@ PARAGRAPH = {"max_chars": 600, "max_pieces": 80}
 WIKIMEDIA = "contributors, each row's id holds the page id, https://{}/?curid=<page id>"
 SOURCES = (
     # Scarce chat first, encyclopaedias last, so the plentiful sources lose every duplicate.
-    # A take of None gives every usable row. The capped sources are clean but repeat themselves: Tatoeba and
-    # SODA near 100,000, Simple English Wikipedia 300,000, 150,000 Common Voice sentences from Wikipedia, and
-    # 4,000 of the iApp questions.
+    # A take of None gives every usable row, and 0 none: the source is built and counted but not taken.
+    # Tatoeba and SODA are capped at 100,000 because they repeat themselves.
     Source("byu_chitchat", "BYU Chit-Chat Dataset", "informal chat", "MIT", MIT,
            "Copyright (c) 2019 Perception, Control and Cognition Lab, Brigham Young University",
            "https://github.com/BYU-PCCL/chitchat-dataset", None, byu, dialogue=True),
@@ -665,7 +717,7 @@ SOURCES = (
     Source("dolly", "databricks-dolly-15k", "questions and answers", "CC BY-SA 3.0", "https://creativecommons.org/licenses/by-sa/3.0/",
            "Databricks, Inc.", "https://huggingface.co/datasets/databricks/databricks-dolly-15k", None, dolly, asked=True),
     Source("iapp", "iApp Wiki QA, questions", "questions and answers", "MIT", MIT,
-           "Copyright (c) 2021 iApp Technology Co., Ltd.", "https://github.com/iapp-technology/iapp-wiki-qa-dataset", 4_000, iapp),
+           "Copyright (c) 2021 iApp Technology Co., Ltd.", "https://github.com/iapp-technology/iapp-wiki-qa-dataset", 0, iapp),  # 76 good rows in 100 after the tidy pass: not taken
     Source("lotusdis", "LOTUSDIS", "spoken conversation", "CC BY-SA 4.0", BY_SA,
            "NECTEC, National Science and Technology Development Agency, Thailand",
            "https://huggingface.co/datasets/nectec/LOTUSDIS", 0, lotusdis, spoken=True),  # 78 whole utterances in 100, under the bar of 85: built and counted, not taken
@@ -682,7 +734,7 @@ SOURCES = (
     Source("tatoeba_en", "Tatoeba, English", "everyday sentences", "CC BY 2.0 FR", "https://creativecommons.org/licenses/by/2.0/fr/",
            "Tatoeba contributors, each row's id holds the sentence number, https://tatoeba.org/sentences/show/<number>",
            "https://tatoeba.org", 100_000,
-           lambda: tatoeba("tatoeba/eng_sentences_detailed.tsv", "en", "tatoeba/eng_sentences_CC0.tsv.bz2", min_words=6), opener_cap=10, modern=True),
+           lambda: tatoeba("tatoeba/eng_sentences_detailed.tsv", "en", "tatoeba/eng_sentences_CC0.tsv.bz2", min_words=6), opener_cap=10, modern=True, name_cap=2_000),
     Source("soda", "SODA", "social chat, written by a language model", "CC BY 4.0", BY,
            "Kim and others, Allen Institute for AI, 2023", "https://huggingface.co/datasets/allenai/soda", 100_000, soda, dialogue=True, opener_cap=300),
     Source("globalvoices", "Global Voices, English (OPUS GlobalVoices 2018Q4)", "news features", "CC BY 3.0", "https://creativecommons.org/licenses/by/3.0/",
@@ -776,6 +828,17 @@ def uncoupled(text, lang):
     return rest[:1].upper() + rest[1:] if rest != text else text
 
 
+def stutters(text, run=10):
+    """Whether the text says the same thing twice in a row: a run of at least `run` characters followed at once
+    by itself, as a careless edit leaves. (A name that comes back later in the sentence is not that.)"""
+    first = {}
+    for i in range(len(text) - run + 1):
+        start = first.setdefault(text[i:i + run], i)
+        if i - start >= run and text.startswith(text[start:i].strip(), i):
+            return True
+    return False
+
+
 def reject(text, lang, source=PLAIN, row_id=""):
     """Why a cleaned row is not worth translating, or None."""
     solid = text.replace(" ", "")
@@ -794,7 +857,7 @@ def reject(text, lang, source=PLAIN, row_id=""):
         return "not a sentence"  # headings, titles and lists of names
     if prose and not thai and (not (text[0].isupper() and SENTENCE_END.search(text)) or CUT_AT_ABBREVIATION.search(text)):
         return "not a sentence"
-    if prose and thai and (not THAI_VERB.search(BRACKETED.sub("", text)) or not re.match("[\"“']?[ก-ฮเ-ไA-Z]", text) or THAI_BOILERPLATE.search(text) or THAI_NOTE.match(text) or THAI_HOLE.search(text)):
+    if prose and thai and (not THAI_VERB.search(BRACKETED.sub("", text)) or not re.match("[\"“']?[ก-ฮเ-ไA-Z]", text) or THAI_BOILERPLATE.search(text) or THAI_NOTE.match(text) or THAI_HOLE.search(text) or stutters(text)):
         return "not a sentence"
     if thai and " - " in text:
         return "not a sentence"  # "song - artist", or two speakers on one line
@@ -836,6 +899,16 @@ def reject(text, lang, source=PLAIN, row_id=""):
     return None
 
 
+def before(row):
+    return row["source"], "after", key(row.get("context", ""))
+
+
+def name_of(row):
+    """The row's first word when it is a name, for the cap on rows that begin with the same one."""
+    first = row["text"].split()[0].strip(",.!?'\"")
+    return row["source"], "name", first if first[:1].isupper() and first.replace("'", "’").split("’")[0].casefold() not in COMMON_STARTS else ""
+
+
 def sift(source, batch, pieces, blocked, benchmark, seen, openers, counts):
     """Clean one batch of (id, text, language) or (id, text, language, turn before) and return the rows that
     pass every filter, counting the rest."""
@@ -850,9 +923,13 @@ def sift(source, batch, pieces, blocked, benchmark, seen, openers, counts):
             context = None
         if context and source.prose and lang == "th" and (THAI_DANGLING.search(context) or THAI_HOLE.search(context) or template(text)[:20] in template(context)):
             context = None  # cut off, holed, or an earlier copy of the row itself
+        if context and source.prose and lang == "th" and ((THAI_IF.match(context) and not THAI_THEN.search(context)) or REPORTED.search(context)):
+            context = None  # a previous line that does not end a sentence
         reason = reject(text, lang, source, row_id)
         if reason == "subject in the row before" and context:
             reason = None  # the sentence that names the subject is carried with it
+        if not reason and not context and source.prose and lang == "th" and THAI_NEEDS_SUBJECT.match(text):
+            reason = "subject in the row before"
         if not reason and source.dialogue and not context and (len(text.split()) < 5 or LEANS.match(text)):
             reason = "needs the turn before"
         if not reason and source.carried and more and more[0] and (not context or ASKS_IDENTITY.search(context)):
@@ -873,13 +950,17 @@ def sift(source, batch, pieces, blocked, benchmark, seen, openers, counts):
                   else "benchmark overlap" if mark in benchmark or (r["lang"] == "en" and not benchmark.isdisjoint(shingles(r["text"])))
                   else "duplicate" if mark in seen
                   else "repeated opener" if source.opener_cap and openers[start] >= source.opener_cap
-                  else "repeated frame" if source.frames and openers[shape] >= FRAME_CAP else None)
+                  else "repeated frame" if source.frames and openers[shape] >= FRAME_CAP
+                  else "repeated previous line" if source.frames and r.get("context") and openers[before(r)] >= PREVIOUS_CAP
+                  else "repeated name" if source.name_cap and name_of(r)[2] and openers[name_of(r)] >= source.name_cap else None)
         if reason:
             counts[reason] += 1
             continue
         seen.add(mark)
         openers[start] += 1
         openers[shape] += 1
+        openers[before(r)] += 1
+        openers[name_of(r)] += 1
         kept.append(r | {"pieces": size})
     return kept
 

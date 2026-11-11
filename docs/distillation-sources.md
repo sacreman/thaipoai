@@ -9,8 +9,8 @@ covered here. It is not deterministic and is recorded separately.
 
 ## 1. What the set is
 
-`data/distill/sources.jsonl` holds 4,125,292 rows: 3,717,164 English and
-408,128 Thai. Each row is one chat utterance, or one or more whole sentences of prose:
+`data/distill/sources.jsonl` holds 4,108,224 rows: 3,707,320 English and
+400,904 Thai. Each row is one chat utterance, or one or more whole sentences of prose:
 
 ```json
 {"id": "sgd-train001-12-3", "text": "I need the car on March 8th.", "lang": "en", "source": "sgd", "register": "task dialogue", "licence": "CC BY-SA 4.0", "context": "What day would you like to pick it up?"}
@@ -18,12 +18,12 @@ covered here. It is not deterministic and is recorded separately.
 
 - `context` is what stands just before the row: on dialogue rows the turn before in the same conversation,
   on Thai prose rows the sentence before in the same article. It is there so the translator knows what is
-  being answered, or who an unstated subject is. Only `text` is to be translated. 787,916 rows carry one.
+  being answered, or who an unstated subject is. Only `text` is to be translated. 779,641 rows carry one.
 - `repairs`, when present, lists what was changed in the text: a leading connective removed, a label or
   option marker removed, a bracket of Chinese, Japanese or Korean removed, a doubled Thai sara e corrected, a trailing connective
   removed from a spoken row.
 - `use`, when present, is `"forward_only"`: the pair made from this row may be trained on only as written,
-  the row's text as source and its translation as target, and never reversed. All 274,557 Thai Wikipedia
+  the row's text as source and its translation as target, and never reversed. All 271,769 Thai Wikipedia
   rows carry it, and no others. A row without the field may be used in both directions. The manifest gives
   the count under `by_use` and each source's setting.
 - `id` holds the source's own id and the row's position in it.
@@ -32,9 +32,9 @@ covered here. It is not deterministic and is recorded separately.
 filter, licence and attribution line, and every input file's address, sha256, size and whether it can
 be fetched again.
 
-Lengths, measured with the project's tokenizer: 92.7 characters on average
-(202 at the 95th percentile) and 26.1 tokenizer pieces
-(57 at the 95th percentile). English averages 86.5 characters, Thai 149.0.
+Lengths, measured with the project's tokenizer: 92.3 characters on average
+(200 at the 95th percentile) and 26.0 tokenizer pieces
+(57 at the 95th percentile). English averages 86.0 characters, Thai 150.2.
 
 Everything is built by one module, `train/distill_sources.py`. Its tests are in `tests/test_distill_sources.py`.
 
@@ -46,30 +46,29 @@ redistribution, and can be combined into a CC BY-SA 4.0 release.
 
 | Source | Dataset | Language | Register | Licence | Rows | Attribution |
 |---|---|---|---|---|---:|---|
-| `byu_chitchat` | BYU Chit-Chat Dataset | English | informal chat | [MIT](https://opensource.org/license/mit) | 104,929 | Copyright (c) 2019 Perception, Control and Cognition Lab, Brigham Young University |
-| `abcd` | Action-Based Conversations Dataset | English | customer-service chat | [MIT](https://opensource.org/license/mit) | 28,728 | Copyright (c) 2021 ASAPP Research |
-| `multiwoz` | MultiWOZ 2.2 | English | task dialogue | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 43,533 | Budzianowski and others 2018; Zang and others 2020. Also offered under MIT in the GitHub repository |
-| `taskmaster2` | Taskmaster-2 | English | spoken task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 76,663 | Byrne, Krishnamoorthi, Ganesh, Dubey, Kim and Cedilnik, Google LLC |
-| `taskmaster3` | Taskmaster-3 | English | task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 117,755 | Byrne, Krishnamoorthi and Ganesh, Google LLC |
-| `sgd` | Schema-Guided Dialogue | English | task dialogue | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 127,595 | Rastogi, Zang, Sunkara, Gupta and Khaitan, Google LLC |
-| `dolly` | databricks-dolly-15k | English | questions and answers | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) | 7,492 | Databricks, Inc. |
-| `iapp` | iApp Wiki QA, questions | Thai | questions and answers | [MIT](https://opensource.org/license/mit) | 4,000 | Copyright (c) 2021 iApp Technology Co., Ltd. |
-| `oasst2_th` | OpenAssistant Conversations (OASST2), Thai | Thai | questions typed to an assistant | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 575 | OpenAssistant contributors, LAION |
+| `byu_chitchat` | BYU Chit-Chat Dataset | English | informal chat | [MIT](https://opensource.org/license/mit) | 189,635 | Copyright (c) 2019 Perception, Control and Cognition Lab, Brigham Young University |
+| `abcd` | Action-Based Conversations Dataset | English | customer-service chat | [MIT](https://opensource.org/license/mit) | 19,848 | Copyright (c) 2021 ASAPP Research |
+| `multiwoz` | MultiWOZ 2.2 | English | task dialogue | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 42,223 | Budzianowski and others 2018; Zang and others 2020. Also offered under MIT in the GitHub repository |
+| `taskmaster2` | Taskmaster-2 | English | spoken task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 48,481 | Byrne, Krishnamoorthi, Ganesh, Dubey, Kim and Cedilnik, Google LLC |
+| `taskmaster3` | Taskmaster-3 | English | task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 80,715 | Byrne, Krishnamoorthi and Ganesh, Google LLC |
+| `sgd` | Schema-Guided Dialogue | English | task dialogue | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 114,690 | Rastogi, Zang, Sunkara, Gupta and Khaitan, Google LLC |
+| `dolly` | databricks-dolly-15k | English | questions and answers | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) | 5,630 | Databricks, Inc. |
+| `oasst2_th` | OpenAssistant Conversations (OASST2), Thai | Thai | questions typed to an assistant | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 576 | OpenAssistant contributors, LAION |
 | `commonvoice_th` | Common Voice sentences, Thai | Thai | everyday sentences | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 147 | None required |
 | `tatoeba_th` | Tatoeba, Thai | Thai | everyday sentences | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) | 1,935 | Tatoeba contributors, each row's id holds the sentence number, https://tatoeba.org/sentences/show/`<number>` |
 | `tatoeba_en` | Tatoeba, English | English | everyday sentences | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) | 100,000 | Tatoeba contributors, each row's id holds the sentence number, https://tatoeba.org/sentences/show/`<number>` |
 | `soda` | SODA | English | social chat, written by a language model | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 100,000 | Kim and others, Allen Institute for AI, 2023 |
-| `globalvoices` | Global Voices, English (OPUS GlobalVoices 2018Q4) | English | news features | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) | 232,301 | Global Voices authors, each row's id holds the article's date and address, https://globalvoices.org/`<yyyy>`/`<mm>`/`<dd>`/`<address>`/ |
-| `enwikinews` | English Wikinews | English | news | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 217,042 | Wikinews contributors, each row's id holds the page id, https://en.wikinews.org/?curid=`<page id>` |
-| `enwikivoyage` | English Wikivoyage | English | travel | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 479,076 | Wikivoyage contributors, each row's id holds the page id, https://en.wikivoyage.org/?curid=`<page id>` |
-| `blognone` | Blognone posts, January 2020 to April 2023 | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 37,539 | Blognone and the post's author. Each row's id holds the post's row number in Noxturnix/blognone-20230430, which gives its author, title and date |
-| `blognone_para` | Blognone posts, whole paragraphs | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 9,640 | As for blognone |
-| `voathai` | Voice of America Thai, articles (Multilingual Open Text 1.11) | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 59,857 | Voice of America, each row's id holds the article number, https://www.voathai.com/a/`<number>`.html. Collected by Palen-Michel, Kim and Lignos, Multilingual Open Text, whose collection is CC BY 4.0 |
-| `voathai_para` | Voice of America Thai, whole paragraphs | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 13,686 | As for voathai |
-| `thailaw` | Thai Law Dataset v1.0, sections of Acts and decrees | Thai | legal | [Public domain (Thai Copyright Act, section 7)](https://creativecommons.org/publicdomain/zero/1.0/) | 6,192 | Collected by PyThaiNLP (Wannaphong Phatthiyaphaibun), released CC0. Each row's id holds the document's number in the dataset |
-| `thwiki` | Thai Wikipedia | Thai | encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 274,557 | Wikipedia contributors, each row's id holds the page id, https://th.wikipedia.org/?curid=`<page id>` |
-| `simplewiki` | Simple English Wikipedia | English | plain-language encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1,124,170 | Wikipedia contributors, each row's id holds the page id, https://simple.wikipedia.org/?curid=`<page id>` |
-| `commonvoice_wiki` | Common Voice sentences taken from English Wikipedia | English | encyclopaedic | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 957,880 | None required |
+| `globalvoices` | Global Voices, English (OPUS GlobalVoices 2018Q4) | English | news features | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) | 227,979 | Global Voices authors, each row's id holds the article's date and address, https://globalvoices.org/`<yyyy>`/`<mm>`/`<dd>`/`<address>`/ |
+| `enwikinews` | English Wikinews | English | news | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 217,015 | Wikinews contributors, each row's id holds the page id, https://en.wikinews.org/?curid=`<page id>` |
+| `enwikivoyage` | English Wikivoyage | English | travel | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 479,071 | Wikivoyage contributors, each row's id holds the page id, https://en.wikivoyage.org/?curid=`<page id>` |
+| `blognone` | Blognone posts, January 2020 to April 2023 | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 37,475 | Blognone and the post's author. Each row's id holds the post's row number in Noxturnix/blognone-20230430, which gives its author, title and date |
+| `blognone_para` | Blognone posts, whole paragraphs | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 9,609 | As for blognone |
+| `voathai` | Voice of America Thai, articles (Multilingual Open Text 1.11) | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 59,587 | Voice of America, each row's id holds the article number, https://www.voathai.com/a/`<number>`.html. Collected by Palen-Michel, Kim and Lignos, Multilingual Open Text, whose collection is CC BY 4.0 |
+| `voathai_para` | Voice of America Thai, whole paragraphs | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 13,643 | As for voathai |
+| `thailaw` | Thai Law Dataset v1.0, sections of Acts and decrees | Thai | legal | [Public domain (Thai Copyright Act, section 7)](https://creativecommons.org/publicdomain/zero/1.0/) | 6,163 | Collected by PyThaiNLP (Wannaphong Phatthiyaphaibun), released CC0. Each row's id holds the document's number in the dataset |
+| `thwiki` | Thai Wikipedia | Thai | encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 271,769 | Wikipedia contributors, each row's id holds the page id, https://th.wikipedia.org/?curid=`<page id>` |
+| `simplewiki` | Simple English Wikipedia | English | plain-language encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1,124,166 | Wikipedia contributors, each row's id holds the page id, https://simple.wikipedia.org/?curid=`<page id>` |
+| `commonvoice_wiki` | Common Voice sentences taken from English Wikipedia | English | encyclopaedic | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 957,867 | None required |
 
 Notes:
 
@@ -97,9 +96,10 @@ Notes:
 - **Benchmarks** (FLORES-200 and WMT24++ English-Thai) are downloaded only to exclude their sentences.
   FLORES+ is access-controlled and was not used: FLORES-200 holds the same sentences before later corrections.
 
-Sources that were built and then left out because too few of their rows passed the quality check: YODAS
+Sources that were built and then left out because too few of their rows passed the quality check: the iApp
+questions (Thai questions about Wikipedia articles: too many have no subject or have article text spliced on), YODAS
 (captions that uploaders typed for Creative Commons videos), LOTUSDIS (spoken Thai conversation) and Thai
-Wikipedia's whole paragraphs, all three still built and counted but with a take of 0; the large Common Voice Thai collector file (about a third of
+Wikipedia's whole paragraphs, all four still built and counted but with a take of 0; the large Common Voice Thai collector file (about a third of
 it is machine translation from English, and it could not be separated); Common Voice English collector
 sentences, Thai and English Wikibooks, OASST2 English, Aya, WangchanThaiInstruct, and the Tatoeba CC0 sentences.
 
@@ -147,17 +147,17 @@ Sources that were examined and not built:
     English-named ones, 5,033 of 189,458 articles in all.
 - **Task dialogues.** Only the user's or customer's side is taken, with the turn before as context. The other
   side is written from templates.
-- **Informal chat (BYU).** The messages one person sent in a row are joined into one utterance.
-- **SODA** is read at one dialogue in four, each turn with the turn before as context.
+- **Informal chat (BYU).** Each message is a row, with the message before it in the conversation as context.
+  Messages spelled out a letter at a time are skipped.
+- **SODA** is read at one dialogue in four, each turn with the turn before as context. Turns holding a stage
+  direction in brackets or asterisks, and turns of eight words or fewer that only greet or thank, are skipped.
 - **Global Voices.** Quoted blog posts are left out, and so are posts with fewer than six sentences of their own
-  and lines under twelve words.
-- **Blognone.** Paragraphs under 100 characters or opening with a bullet are list items and headings, and are skipped.
-- **Voice of America.** A paragraph holding " / " is a digest of several headlines, and is skipped.
-- **Thai law.** Each paragraph of a section of an Act or decree is a row, with the section number removed and
-  the lines it was typed on joined. Sections holding numbered lists, amendments, short titles and
-  commencement clauses are left out.
+  and lines under twelve words. So are captions and credits ("Photo by", "used under", "CC BY", "Original
+  post", a line ending in an abbreviated month), lines with a link's language tag such as (RUS), and lines
+  opening "In it", "They are" or "Check out".
 - **Questions typed to an assistant (OASST2 Thai).** Each one-line message is a row, whole.
-- **Questions (Dolly, iApp).** Only questions are taken, and not those that point at a text that is not in the row.
+- **Questions (Dolly).** Only the questions people wrote are taken, from records that have no reference
+  text, and not those typed without a capital or that point at a text that is not in the row.
 
 ## 4. Filters, in order
 
@@ -211,10 +211,15 @@ Each row is counted in the manifest under the first filter that removed it.
 14. **Duplicate.** Two rows are the same if they match after case-folding, replacing digits with 0, removing
     punctuation and spaces, and treating Tatoeba's Tom and Mary as one name. Sources are read in a fixed
     order, conversation first and encyclopaedias last, so the scarcer source keeps the row.
-15. **Repeated opener and frame.** At most 300 SODA rows and 10 Tatoeba rows may begin with the same three
-    words. In task dialogues, slot values (using the datasets' own annotations), capitalised names,
-    numbers, months, weekdays and times are masked and the line lower-cased, and at most 5 rows may share
-    that frame. This saves money, not quality: the lines differ only in the city or the date.
+15. **Repetition.** These save money, not quality: the rows differ only in a name, a place or a date.
+    - At most 300 SODA rows and 10 Tatoeba rows may begin with the same three words.
+    - At most 2,000 Tatoeba rows may begin with the same name (Tom, Yanni, Ziri and the rest), which is 2% of
+      what Tatoeba gives. A first word counts as a name when it is capitalised and not a common opening word.
+    - In task dialogues a line's frame is the line lower-cased with these masked: the slot values the dataset
+      marks in it, any slot value the dataset marks anywhere (so "to Boston" is masked in a line nobody
+      annotated), capitalised names, numbers and number words, months, weekdays and times. At most 5 rows
+      may share a frame.
+    - In task dialogues at most 2 rows may answer the very same previous line.
 16. **Near duplicate.** Over the whole pool: a row of 50 or more letters is dropped when its first 40 or
     last 40 letters match an earlier kept row and Python's `difflib` rates the two 0.8 similar or more.
 
@@ -234,7 +239,7 @@ earlier builds, and the set was changed after each. The last of them passed ABCD
 (88) and its whole paragraphs (90), and Blognone's whole paragraphs (98), and failed Thai Wikipedia, its
 whole paragraphs and YODAS, which was then taken out.
 
-**Thai Wikipedia's sentences are under the bar on the latest sample (83 good rows in 100, none unusable)
+**Thai Wikipedia's sentences are under the bar on the latest sample (82 good rows in 100, none unusable)
 and are kept for one direction only**, Thai to English: see `use` in section 1. Its whole paragraphs scored 67
 under a stricter reading that counts machine-translated wording as a flaw, and are not taken. What is
 wrong in both is mostly the articles' own writing (translated wording, typing errors, missing words), which
@@ -250,13 +255,13 @@ here, 99 independently) are flagged.
 | `taskmaster3` | prose | 97 | 3 | 0 |
 | `sgd` | prose | 83 | 17 | 0 |
 | `dolly` | prose | 87 | 13 | 0 |
-| `iapp` | prose | 88 | 12 | 0 |
+| `iapp` | prose | 76 | 24 | 0 |
 | `oasst2_th` | utterance | 100 | 0 | 0 |
 | `commonvoice_th` | utterance | 100 | 0 | 0 |
 | `tatoeba_th` | prose | 100 | 0 | 0 |
 | `tatoeba_en` | prose | 96 | 4 | 0 |
 | `soda` | prose | 97 | 3 | 0 |
-| `globalvoices` | prose | 93 | 7 | 0 |
+| `globalvoices` | prose | 88 | 9 | 3 |
 | `enwikinews` | prose | 91 | 9 | 0 |
 | `enwikivoyage` | prose | 88 | 12 | 0 |
 | `blognone` | prose | 89 | 11 | 0 |
@@ -264,13 +269,13 @@ here, 99 independently) are flagged.
 | `voathai` | prose | 89 | 11 | 0 |
 | `voathai_para` | prose | 88 | 12 | 0 |
 | `thailaw` | prose | 93 | 7 | 0 |
-| `thwiki` | prose | 83 | 17 | 0 |
+| `thwiki` | prose | 82 | 18 | 0 |
 | `thwiki_para` | prose | 67 | 33 | 0 |
 | `simplewiki` | prose | 92 | 7 | 1 |
 | `commonvoice_wiki` | prose | 95 | 5 | 0 |
 | `lotusdis` | utterance | 78 | 22 | 0 |
 
-LOTUSDIS and `thwiki_para` are in this table but are not taken. Rows of the English dialogue and chat sources were
+LOTUSDIS, `thwiki_para` and `iapp` are in this table but are not taken. Rows of the English dialogue and chat sources were
 judged with the turn before in view.
 
 ## 6. The mix
@@ -278,7 +283,7 @@ judged with the turn before in view.
 Each source has a `take`: the number of rows it gives, or `None` for every usable row. Rows are chosen by a
 fixed pseudo-random order of their ids (a hash), so a partial take is a spread sample and comes out the same
 every time. There is no target total. Capped sources: SODA and Tatoeba English 100,000 each (both repeat
-themselves), iApp 4,000, Thai law 50,000 (it has fewer). YODAS, LOTUSDIS and `thwiki_para` have a take of 0. Every other source gives
+themselves), Thai law 50,000 (it has fewer). iApp, YODAS, LOTUSDIS and `thwiki_para` have a take of 0. Every other source gives
 all its usable rows.
 
 ## 7. Commands
@@ -352,8 +357,9 @@ No workflow exists yet. Open items:
 
 The build uses no random numbers, no threads of its own and no clock. Files and archive members are read in
 sorted order, hashes are BLAKE2 and SHA-256 and do not depend on Python's hash seed, and sets are used only
-for membership tests, never for output order. Output is written as UTF-8 with `\n` line ends. The present version was run twice from the same downloads and gave the
-same `sources.jsonl`, `candidates.jsonl` and `manifest.json`, byte for byte.
+for membership tests, never for output order. Output is written as UTF-8 with `\n` line ends. The version before the last tidy pass was run twice from the same
+downloads and gave the same `sources.jsonl`, `candidates.jsonl` and `manifest.json`, byte for byte. The
+present version has been run once.
 
 What could still differ on another platform, and has not been tested:
 
@@ -371,7 +377,7 @@ Measured on an Apple M4 Max laptop:
 | Step | Wall time | Peak memory |
 |---|---:|---:|
 | `fetch`, all files (3.6 GB) | not timed as one run | not measured |
-| `candidates`, `near` and `mix` together | 27 minutes | 4.6 GB |
+| `candidates`, `near` and `mix` together | 28 minutes | 4.6 GB |
 
 Peak disk is about 8 GB: 3.6 GB of downloads, 1.7 GB `filtered.jsonl`, 1.6 GB `candidates.jsonl` and 1.1 GB
 `sources.jsonl`, plus the corpus. A standard GitHub-hosted Linux runner has 4 cores, 16 GB of memory,
