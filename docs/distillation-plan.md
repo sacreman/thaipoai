@@ -53,35 +53,34 @@ Thai to English (section 8, Koehn). The share of Thai-origin text matters for th
 
 ## 3. Sources
 
-**Rule: a source goes in only if its licence allows commercial use, redistribution and derived works,
-and the licence was granted by whoever holds the rights to the text.** Each licence is read on the
+**Rule: sources are in two tiers, and every row carries its tier.**
+
+- **Tier 1** has a licence that allows commercial use, redistribution and derived works, granted by
+  whoever holds the rights to the text.
+- **Tier 2** is public Thai text with no stated licence, or with a licence that covers only the
+  packaging. It was added on 11 November 2026 because tier 1 Thai ran out near 500,000 rows. It is
+  kept apart so that the set can be built without it in one step, and whether it stays is decided
+  before any release.
+
+A source with an explicit term against this use stays out of both tiers. Each licence is read on the
 source's own page and recorded with an attribution line in the manifest.
 
-In the build today (interim, 2,646,975 rows: 2,226,791 English, 420,184 Thai):
-
-| Register | Sources | Rows |
-|---|---|---:|
-| Travel | English Wikivoyage | 535,012 |
-| Encyclopaedic | Thai Wikipedia; Wikipedia sentences from Common Voice | 460,458 |
-| Task and service dialogue | Schema-Guided Dialogue, Taskmaster 2 and 3, MultiWOZ, ABCD | 417,736 |
-| Plain-language encyclopaedic | Simple English Wikipedia | 300,000 |
-| News features | Global Voices | 293,660 |
-| News | English Wikinews; Voice of America Thai | 279,122 |
-| Informal chat | BYU Chit-Chat | 105,286 |
-| Everyday sentences | Tatoeba English and Thai | 101,936 |
-| Social chat written by a model | SODA | 100,000 |
-| Technology news | Blognone | 42,267 |
-| Questions, instructions | iApp, Dolly | 11,498 |
+The pool today is 9,065,701 rows, and the set reduced from it for distillation is 8,731,390 rows:
+3,700,902 English (all tier 1) and 5,030,488 Thai (501,476 tier 1 and 4,529,012 tier 2). Subtitle
+dialogue from OpenSubtitles is 4,418,737 of the tier 2 rows and scores about 77 clean rows in 100,
+under the bar of 85; it is in because it is the only large body of conversational Thai. The
+[source record](distillation-sources.md) lists every source with its licence, tier, row count and
+sample score.
 
 Left out, and why:
 
 | Kind | Examples | Reason |
 |---|---|---|
-| Web crawls | HPLT, FineWeb2, OSCAR, CC100, mC4, CulturaX, Mangosteen web | The collection's licence covers the packaging, not the pages. OSCAR's access is suspended |
-| Scraped news and reports | ThaiSum, HSE Thai Corpus, CMDF_VISTEC | A compiler's licence over publishers' text |
+| Web crawls | HPLT, FineWeb2, OSCAR, CC100, mC4, CulturaX, Mangosteen web | Quality: 47 to 60 clean rows in 100 after filtering. OSCAR and CulturaX also need an access agreement |
+| Scraped news and reports | ThaiSum, HSE Thai Corpus, CMDF_VISTEC | Publishers' terms restrict reuse; ThaiSum also scored 75 |
 | Mined parallel web text | ParaCrawl bonus (Koehn 2024), OPUS collections | Web-crawled; and distilled data did better for Thai (section 8) |
 | Non-commercial | BEST, ORCHID, LOTUS, Thai National Corpus, most of WangchanThaiInstruct, Prachathai | Licence |
-| Other people's posts | Pantip sets, tweet sets, Wisesight | Posted by people who did not grant the licence. Wisesight is CC0 and stays a caveated option |
+| Other people's posts | Pantip sets, tweet sets | Posted by people who did not grant a licence. Wisesight and Wongnai reviews are in as tier 2 |
 | Outputs of other models | Hunyuan-MT, Claude, and any teacher whose terms forbid training on its output | Terms. The teacher is DeepSeek, whose terms allow it |
 
 ## 4. What the audit found

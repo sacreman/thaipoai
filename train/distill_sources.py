@@ -8,11 +8,14 @@ Fetch:      python -m train.distill_sources fetch
 Build:      python -m train.distill_sources        (candidates, near, mix)
 Near only:  python -m train.distill_sources near mix   (re-does near-duplicate removal from filtered.jsonl)
 Re-balance: python -m train.distill_sources mix   (after changing a source's take; reuses the filtered rows)
+Tier 1 only: python -m train.distill_sources mix_tier1   (the same mix with the tier 2 sources left out)
+Reduce:     python -m train.distill_sources reduce   (from the pool, sources.jsonl, to distill_set.jsonl; reduce_tier1 leaves tier 2 out)
 """
 
 import array
 import bz2
 import collections
+import csv
 import difflib
 import gzip
 import hashlib
@@ -23,6 +26,7 @@ import re
 import shutil
 import sys
 import tarfile
+import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
@@ -86,13 +90,13 @@ THAI_LEANS = "และ|หรือ|แต่|ซึ่ง|โดย|เพื�
 THAI_START = re.compile(rf"[\"“']?(?:{THAI_LEANS})")
 # Words that open a new Thai sentence and nothing else: discourse markers and time phrases. A space before one of
 # these is the only place Thai prose is cut, because it is the only place a sentence boundary is certain.
-THAI_AS_FOR = "ส่วน(?!ใหญ่|หนึ่ง|มาก|ตัว|ที่|ของ|ผสม|ประกอบ|ลด|แบ่ง|ร่วม|สูง|ต่าง|น้อย|เกิน|บน|ล่าง|หน้า|หลัง|กลาง|ใน|นอก|บุคคล|ราชการ)"  # "as for", not the many words it begins
+THAI_AS_FOR = "ส่วน(?!แห่ง|ใหญ่|หนึ่ง|มาก|ตัว|ที่|ของ|ผสม|ประกอบ|ลด|แบ่ง|ร่วม|สูง|ต่าง|น้อย|เกิน|บน|ล่าง|หน้า|หลัง|กลาง|ใน|นอก|บุคคล|ราชการ)"  # "as for", not the many words it begins
 THAI_OPENER = re.compile("(?:นอกจากนี้|นอกจากนั้น|อย่างไรก็ตาม|อย่างไรก็ดี|ทั้งนี้|ดังนั้น|ด้วยเหตุนี้|ต่อมา|หลังจากนั้น|จากนั้น|ปัจจุบัน|ในปัจจุบัน|"
                          f"ก่อนหน้านี้|ล่าสุด|ขณะเดียวกัน|ในขณะเดียวกัน|โดยทั่วไป|ทว่า|{THAI_AS_FOR})")
 THAI_VERB = re.compile("เป็น|มี|ได้|คือ|อยู่|ให้|จะ|ถูก|ทำ|ไป|มา|ว่า|เกิด|ใช้|ต้อง|ไม่")  # a Thai line with none of these is nearly always a label
 # A row that stops on one of these stops mid-thought. The guards are whole words that happen to end the same way.
 THAI_DANGLING = re.compile("(?:(?<!รูป)(?<!ต้น)แบบ|แบบว่า|(?<!ก)ว่า|ก็|แล้วก็|คือ|เช่น|และ|หรือ|เพื่อ|เพราะว่า|แต่ว่า|(?<!หน้า)(?<!สถาน)(?<!พื้น)(?<!เนื้อ)ที่|ที่จะ|(?<!สิ่ง)(?<!ข้าว)ของ|เป็น|โดย|(?<!งบ)ประมาณ|อาทิ|ดังนี้|ดังต่อไปนี้|ได้แก่|ประกอบด้วย|ประกอบไปด้วย|ดังนั้น|สมการ|หลังจาก|เพราะ|เนื่องจาก|ซึ่ง|\\.\\.|:)$")
-THAI_IF = re.compile("(?:ถ้า|หาก|เพื่อ|เนื่องจาก|เพราะ|หลังจาก(?!นั้น|นี้)|นอกจาก(?!นี้|นั้น)|ก่อนที่|กรณีที่|ในกรณี|เมื่อ(?!วาน|คืน|เช้า|กี้|ก่อน|ไม่นาน|ปี|เดือน|วันที่|สัปดาห์|เร็ว|ครู่|สักครู่|ไร|ไหร่))")  # needs a main clause after it
+THAI_IF = re.compile("(?:ในเมื่อ|ถึงแม้ว่า|ถึงแม้|แม้ว่า|ถ้า|หาก|เพื่อ|เนื่องจาก|เพราะ|หลังจาก(?!นั้น|นี้)|นอกจาก(?!นี้|นั้น)|ก่อนที่|กรณีที่|ในกรณี|เมื่อ(?!วาน|คืน|เช้า|กี้|ก่อน|ไม่นาน|ปี|เดือน|วันที่|สัปดาห์|เร็ว|ครู่|สักครู่|ไร|ไหร่))")  # needs a main clause after it
 THAI_THEN = re.compile("ก็|จะ|จึง|ต้อง|ทำให้|ยัง")
 # A written Thai sentence that opens with one of these verbs has left its subject in the sentence before.
 THAI_SUBJECTLESS = re.compile("(?:มี(?!การ|ผู้|คน)|หัวมี|ถิ่นกำเนิดของมัน|รายชื่อ|ปัจจุบัน ?(?:เป็น|มี|ดำรง|อยู่|ใช้|ตั้ง|ยัง|ได้|สังกัด|เล่น|ทำงาน|อาศัย)|หากิน|แสดงนำ|พบได้|พบใน|นิยม|จัดเป็น|อาศัย|ออกดอก|มัก|สามารถ|ลด|เพิ่ม|มองว่า|ผลักดัน|ขยับ|รองรับ|ยัง|จะ|ถูก|เคย|ได้รับ|อยู่|ต้อง|ไม่|ช่วย|ทำหน้าที่|ตั้งอยู่|เริ่ม|มีชื่อ|มีพื้นที่|มีอาณาเขต|ดำรงตำแหน่ง|จบการศึกษา|สำเร็จการศึกษา|บทที่|ตอนที่|ข้อที่)")
@@ -486,6 +490,21 @@ def common_voice_th():
     return itertools.chain.from_iterable(lines_of(f"commonvoice_th-{name[:2]}", f"commonvoice/th-{name}", "th") for name in ("Wannaphong.txt", "thsentences.txt"))
 
 
+TRANSLATED = re.compile("ฉัน|เธอ|พวกเขา|พวกเรา|ของ(?:เขา|คุณ|มัน)|^(?:เขา|คุณ|มัน|และ|แต่|นั่นคือ|โปรด)|ทำการ|ได้ถูก|สามารถ|[A-Za-z:!-]|ทอม|แมรี่|อลิซ")
+
+
+def common_voice_collector():
+    """The large file of sentences given to Common Voice to be read aloud. About a third of it was translated
+    from English by machine, and the file is sorted, so batches cannot be told apart. The translated rows
+    show in their pronouns (English needs a subject and a possessive where Thai leaves them out), so a row
+    with the written pronouns for "I", "she" and "they", one that opens with "he" or "you", or one that says
+    "of him", "of you" is left out, with some native rows lost to the same rule; reviewers still found a
+    third of what remains translated. Rows too short to be more than a label are left out too."""
+    for row_id, text, lang in lines_of("commonvoice_th-sc", "commonvoice/th-sentence-collector.txt", "th"):
+        if not TRANSLATED.search(text) and THAI_VERB.search(text) and len(text.strip()) >= 20:
+            yield row_id, text, lang
+
+
 # Words that close what a speaker is saying. Topic markers (เนี่ย, อะ, อย่างนี้) are not among them: speakers pause on those mid-thought.
 TURN_CLOSE = re.compile("(?:(?<!เนี่ย)(?<!เนี้ย)(?<!อะ)(?<!นะ)(?:ครับ|ครับผม|ค่ะ|คะ)|เลย|ไหม|มั้ย|ด้วย|เนอะ|เนาะ|หรอ|เหรอ)$")
 
@@ -512,22 +531,21 @@ def lotusdis(path="lotusdis/transcripts.jsonl"):
 
 GAMBLING = re.compile(r"สล็อต|บาคาร่า|คาสิโน|แทงบอล|เว็บตรง|ฟรีสปิน|เครดิตฟรี|หวยออนไลน์|(?i:slot|casino|baccarat)")
 CAPTION_NOISE = re.compile(r"\[[^\]]*\]|\([^)]{0,30}\)|[♪♫]")  # [music], a (speaker) or (sound) tag, notes
-SHOUTED = 0.02  # a video with more than this share of lines ending in "!" is fan-translated subtitles, not Thai speech
-# A polite particle closes an utterance, except after นะ, which narrators say in the middle of one.
-SPOKEN_END = re.compile("(?<!นะ)(?<!น่ะ)(?:ครับ|ครับผม|ค่ะ|คะ|จ้ะ|จ้า)$")
+# A polite particle closes a sentence, except after นะ, which narrators say in the middle of one.
+SPOKEN_END = re.compile(r"(?:(?<!นะ)(?<!น่ะ)(?:ครับ|ครับผม|ค่ะ|คะ|จ้ะ|จ้า)|[.?!])$")
+SPOKEN_CLOSE = re.compile("(?:เลย|ไหม|มั้ย|เนอะ|หรอ|เหรอ|แล้ว|ด้วย|สิ|ล่ะ|อ่ะ)$")
 PAUSE = 200  # hundredths of a second of silence that end an utterance
-CAPTION_ROW = 100  # characters a joined caption utterance may reach
 SPOKEN_ROW = 150  # characters a joined run of conversation may reach before it is given up
 
 
 def utterances(captions):
     """Join one video's caption lines, (start, end, text) in order, into whole utterances. A caption line is
-    a screenful, not a sentence. An utterance ends at a line that closes with a polite particle. Lines cut
-    off by a pause of two seconds or by a "-" that marks another speaker are thrown away, so no half-utterance
-    is kept, and so is an utterance of more than CAPTION_ROW characters: long ones are mostly several
-    speakers or thoughts run together. (Utterances ending in punctuation or a looser closing word were tried
-    and were whole less often. On fresh labelled samples the rule as it stands gave 88 whole utterances in
-    100, against 81 without the two limits.) Yields (index of the first line, text)."""
+    a screenful, not a sentence. An utterance ends at a line that closes with a polite particle or closing
+    punctuation, or with a looser closing word just before a pause of two seconds. Lines cut off by a pause
+    or by a "-" that marks another speaker are thrown away, so no half-utterance is kept.
+    Yields (index of the first line, text). One that grows past the length limit is dropped later, whole.
+    (A stricter version, polite particle only and at most 100 characters, scored higher but kept a third of
+    the rows. The source is a candidate pool now, so the fuller version is used and the later reduction decides.)"""
     first, parts = 0, []
     for i, (start, end, text) in enumerate(captions):
         text = clean(CAPTION_NOISE.sub(" ", text))
@@ -538,17 +556,16 @@ def utterances(captions):
             first = i
         if text:
             parts.append(text)
-        closed = bool(parts) and bool(SPOKEN_END.search(parts[-1]))
-        if closed and len(" ".join(parts)) <= CAPTION_ROW:
+        paused = i + 1 == len(captions) or captions[i + 1][0] - end >= PAUSE
+        if parts and (SPOKEN_END.search(parts[-1]) or (paused and SPOKEN_CLOSE.search(parts[-1]))):
             yield first, " ".join(parts)
-        if closed or (parts and parts[-1][-1] in ".?!") or i + 1 == len(captions) or captions[i + 1][0] - end >= PAUSE:
-            parts = []
+        if paused or (parts and SPOKEN_END.search(parts[-1])):
+            parts = []  # what a pause cuts off without a closing word is not a whole utterance
 
 
 def yodas(pattern="yodas/*.txt"):
     """Captions that YouTube uploaders supplied for videos they released under a Creative Commons licence.
-    Text only. Videos that are not mostly Thai, that advertise gambling, or whose lines often end in "!"
-    (subtitles translated from another language) are left out whole."""
+    Text only. Videos that are not mostly Thai, or that advertise gambling, are left out whole."""
     videos = {}
     for path in sorted(RAW.glob(pattern)):
         with open(path, encoding="utf8") as lines:
@@ -558,8 +575,7 @@ def yodas(pattern="yodas/*.txt"):
                 videos.setdefault(name[:11], []).append((int(start), int(end), text))
     for video, captions in videos.items():
         solid = "".join(t for _, _, t in captions).replace(" ", "")
-        shouted = sum(t.rstrip().endswith("!") for _, _, t in captions) / len(captions)
-        if len(THAI.findall(solid)) >= 0.7 * len(solid) and not GAMBLING.search(solid) and shouted <= SHOUTED:
+        if len(THAI.findall(solid)) >= 0.7 * len(solid) and not GAMBLING.search(solid):
             for first, text in utterances(captions):
                 yield f"yodas-{video}-{first}", text, "th"
 
@@ -567,22 +583,291 @@ def yodas(pattern="yodas/*.txt"):
 SECTION = re.compile(r"มาตรา [\d๐-๙]+(?:/[\d๐-๙]+)?(?: (?:ทวิ|ตรี|จัตวา))?\s+")
 
 
-LAW_BREAK = re.compile(r"หมวด|ส่วนที่|ลักษณะ|ภาค|บทเฉพาะกาล|หมายเหตุ|ผู้รับสนอง|อัตรา|บัญชี|\W|[\d๐-๙]")  # a heading, the signature, the notes and schedules
+LAW_BREAK = re.compile(r"หมวด|ส่วนที่|ลักษณะ|ภาค|บทเฉพาะกาล|หมายเหตุ|ผู้รับสนอง|อัตรา|บัญชี|ประกาศ ณ|ให้ไว้ ณ|สั่ง ณ|ลงชื่อ|\W|[\d๐-๙]")  # a heading, the signature, the notes and schedules
+CLAUSE = re.compile(r"ข้อ [\d๐-๙]+(?:/[\d๐-๙]+)?\s+")
 
 
-def thai_law(pattern="thailaw/*.parquet"):
+SIGNED = re.compile("(?:กาศ|ให้ไว้|สั่ง) ณ วันที่|ผู้มีอำนาจลงนาม|รัฐมนตรีว่าการ\\S*$|รัฐมนตรีว่าการกระทรวง\\S+$")  # the signature block, or what is left of it
+PROVIDES = re.compile("ให้|ต้อง|ห้าม|มิให้|อาจ|มีสิทธิ|ย่อม|ควร|จะ")  # a clause that provides nothing is a heading or a name
+
+
+def thai_law(name="thailaw", marker=SECTION, pattern="thailaw/*.parquet"):
     """Paragraphs of the sections of Thai Acts and decrees: from "มาตรา 5" to the next heading, each paragraph
-    with the lines it was typed on joined again. Sections that hold a numbered list, or only amend or name another law, are left out."""
+    with the lines it was typed on joined again. Sections that hold a numbered list, or only amend or name
+    another law, are left out. With marker CLAUSE it gives the clauses ("ข้อ 5") of announcements, regulations
+    and orders instead, which stop at the signature block. A clause that still holds a signature line, or
+    that has none of the words a provision is made with (ให้, ต้อง, ห้าม, อาจ ...), is left out."""
     import pyarrow.parquet as pq
 
+    other = CLAUSE if marker is SECTION else SECTION
     for path in sorted(RAW.glob(pattern)):
         for i, text in zip(*(pq.read_table(path, columns=[c])[c].to_pylist() for c in ("__index_level_0__", "text"))):
             inside = False
             for n, block in enumerate(re.split(r"\n\s*\n", text)):
                 block = " ".join(block.split())
-                inside = bool(SECTION.match(block)) or (inside and not LAW_BREAK.match(block))
+                inside = bool(marker.match(block)) or (inside and not LAW_BREAK.match(block) and not other.match(block))
                 if inside and not re.search(r"\([\d๐-๙ก-ฮ]{1,2}\)|ให้ยกเลิก|ให้เพิ่ม|เรียกว่า|ให้ใช้บังคับ|รักษาการตาม|[“\"]", block):
-                    yield f"thailaw-{i}-{n}", SECTION.sub("", block, count=1), "th"
+                    if marker is SECTION or (PROVIDES.search(block) and not SIGNED.search(block)):
+                        yield f"{name}-{i}-{n}", marker.sub("", block, count=1), "th"
+
+
+# A court's order at the end of a judgment ("พิพากษายืน", "ยกฟ้อง ...") says nothing without the judgment before it.
+DISPOSITION = re.compile("(?:จึง)?พิพากษา|ยก(?:ฟ้อง|ฎีกา|อุทธรณ์|คำร้อง)|ให้ยก|คงให้|นอกจากที่แก้|ค่าฤชาธรรมเนียม")
+# A private person named by title, first name and surname: "นายวิชัย อ่อนถาวร". Not นายกรัฐมนตรี, นายจ้าง and the like.
+PERSON = re.compile("(?:นาย(?!ก|จ้าง|ทะเบียน|หน้า|ประกัน|อำเภอ|ตรวจ|ช่าง|ทหาร|ตำรวจ|แพทย์|ท่า|ทุน|เรือ|สถานี|ด่าน)|นางสาว|นาง(?!สาว)|เด็กชาย|เด็กหญิง|ด\\.ช\\.|ด\\.ญ\\.|น\\.ส\\.|(?:พล|พัน|ร้อย|นาวา|เรือ|จ่าสิบ|สิบ|ดาบ)(?:ตำรวจ|อากาศ)?(?:เอก|โท|ตรี)|(?:[รพสจด]\\.){1,2}[อทตต]\\.)[ก-๙]{2,} ?[ก-๙]{2,}")
+MODERN_JUDGMENTS = 2500  # the first year (Buddhist era) read: older records are in reformed or archaic spelling, many typed a word at a time
+
+
+DOCKET = re.compile(r"\(อันดับ[^)]*\)")  # "(อันดับ 85 แผ่นที่ 2)": where the paper is in the file
+MINOR = re.compile(r"(?:เด็กหญิง|เด็กชาย|ด\.ญ\.|ด\.ช\.) ?[ก-ฮ]\.?")  # a child, even by initial
+INITIAL = re.compile(r"[ก-ฮ]\.\s")  # a paragraph that opens with a person's initial
+# A house number with its sub-district, district or province; a land deed's number; a company named as a party.
+PLACE = re.compile(r"เลขที่ ?[\d๐-๙/-]+.{0,40}(?:ตำบล|อำเภอ|จังหวัด|แขวง|เขต|ต\.|อ\.|จ\.)|โฉนด.{0,20}เลขที่|บริษัท ?\S+ ?จำกัด|ห้างหุ้นส่วน")
+LITIGANT = re.compile(r"'name': '([^']+)'")
+TITLE = re.compile("^(?:นาย|นางสาว|นาง|เด็กชาย|เด็กหญิง|ด\\.ช\\.|ด\\.ญ\\.|น\\.ส\\.|ว่าที่|ร้อย\\S+|พัน\\S+|พล\\S+|สิบ\\S+|จ่า\\S+|ดาบ\\S+)\\s*")
+
+
+def supreme_court(pattern="court/*.parquet", counts=None):
+    """Paragraphs of Thai Supreme Court judgments, each with the sentence before it in the same judgment as
+    context. A record whose headnote the Thai Bar wrote is left out whole: that headnote is somebody else's
+    text. These are real people's cases, so a paragraph that names a private person goes: a title or rank
+    followed by a name, the name of one of the record's own litigants, a child even by initial, or a paragraph
+    that opens with a person's initial. So does one with a house address, a land deed's number or a company
+    named as a party, one with "ฯลฯ", the closing orders, a paragraph typed with a space between every word,
+    and every judgment from before MODERN_JUDGMENTS. Docket references are removed from the text.
+    counts, if given, receives how many paragraphs each rule dropped."""
+    import pyarrow.parquet as pq
+
+    counts = collections.Counter() if counts is None else counts
+
+    def kept(text, names):
+        lines = [DOCKET.sub(" ", line) for line in text.split("\n") if line.strip()]
+        # Some records are typed with a line break every hundred characters or so: those lines are one paragraph.
+        paragraphs = [" ".join(lines)] if len(lines) >= 3 and max(map(len, lines)) <= 140 else lines
+        for p in paragraphs:
+            reason = ("spaced" if p.count(" ") > len(p) / 8 else "closing order" if DISPOSITION.match(p.strip())
+                      else "names a person" if PERSON.search(p) or MINOR.search(p) or INITIAL.match(p.strip()) or any(n in p for n in names)
+                      else "address, deed or company" if PLACE.search(p) else "list" if "ฯลฯ" in p else None)
+            counts[reason or "kept"] += 1
+            if not reason:
+                yield p
+
+    for path in sorted(p for p in RAW.glob(pattern) if int(p.stem) >= MODERN_JUDGMENTS):
+        for r in pq.read_table(path, columns=["docid", "short_text", "long_text", "source", "litigants"]).to_pylist():
+            if r["source"] == "เนติบัณฑิตยสภา":
+                counts["Thai Bar record"] += 1
+                continue
+            # a litigant's given name, without title or "กับพวก" (and others); firms and offices are not private persons
+            names = {rest[0] for n in LITIGANT.findall(str(r["litigants"] or "")) if TITLE.match(n) and (rest := TITLE.sub("", n).split()) and len(rest[0]) >= 3}
+            yield from thai_rows(f"court-{r['docid']}", itertools.chain(kept(r["short_text"] or "", names), kept(r["long_text"] or "", names)))
+
+
+BLANKED = re.compile(r"(?<![\d๐-๙])\s+\.?\s*(?:บาท|%|ชม\.|ชั่วโมง|นาที|เปอร์เซ็นต์|G\b)|\s\.\s|(?<![\dA-Za-z])[gG]\b")
+# What shows that a short call-centre line is something said, not a topic label: a particle, a pronoun or a question word.
+SAID = re.compile("ครับ|ค่ะ|คะ|นะ|หน่อย|ด้วย|ผม|ฉัน|หนู|เรา|คุณ|พี่|น้อง|ไหม|มั้ย|อะไร|ยังไง|อย่างไร|เท่าไร|เท่าไหร่|ทำไม|ไหน|หรือ|กี่|ขอ|อยาก|ต้องการ|ช่วย")  # the publisher removed the number: "เช็ต . บาท", "โปร %"
+
+
+def truevoice(path="truevoice/mari-intent.zip"):
+    """What customers said to a mobile operator's call centre, as transcribed. The publisher blanked some
+    numbers, and an utterance with such a hole is left out (a lone "G" is what is left of "3G"), as is a bare
+    topic: no verb, or under 30 characters with no particle, pronoun or question word."""
+    with zipfile.ZipFile(RAW / path) as archive:
+        for name in ("mari_train.csv", "mari_test.csv"):
+            for i, row in enumerate(csv.DictReader(io.TextIOWrapper(archive.open(name), encoding="utf8"))):
+                if not BLANKED.search(row["texts"]) and THAI_VERB.search(row["texts"]) and (len(row["texts"].strip()) >= 30 or SAID.search(row["texts"])):
+                    yield f"truevoice-{name[5:-4]}-{i}", row["texts"], "th"
+
+
+# An instruction that asks about a case, an article or a study that is not in the row, or that opens with a writing-task template.
+ELSEWHERE = re.compile("โจทก์|จำเลย|คดีนี้|ฎีกาที่|คำพิพากษา|กรณีศึกษา|บทความ|ข้างต้น|ดังกล่าว|Business Model Canvas|^(?:จง|เขียน)")
+
+
+def wangchan(path="wangchan/train.parquet"):
+    """The instructions people wrote for WangchanThaiInstruct, from the rows it licenses CC BY-SA 4.0 and that
+    stand alone (no input passage). Most of the dataset is CC BY-NC and is not read; nor are the answers."""
+    import pyarrow.parquet as pq
+
+    for r in pq.read_table(RAW / path, columns=["ID", "Instruction", "Input", "License"]).to_pylist():
+        if r["License"] == "cc-by-sa-4.0" and (r["Input"] or "None").strip() in ("None", "") and "\n" not in r["Instruction"].strip() and not ELSEWHERE.search(r["Instruction"].strip()):
+            yield f"wangchan-{r['ID']}", r["Instruction"], "th"
+
+
+PROMO = re.compile("อย่าพลาด|ต้องติดตาม|คูปอง|ส่วนลด|สาขาที่ร่วมรายการ|ที่สุดแห่ง|โปรโมชั่น|ลดราคา|สนใจติดต่อ|สั่งซื้อ|ด\\.ญ\\.|ด\\.ช\\.")
+PERSONAL = re.compile("ผม|ฉัน|เรา|กู|หนู|คุณ|มึง|เธอ|พี่|น้อง|ไหม|มั้ย|อะไร|ทำไม|ยังไง|เท่าไร|เท่าไหร่|ไหน|หรือ|\\?")
+BRAND = re.compile(r"\b[A-Za-z][A-Za-z0-9&'-]{2,}\b")
+BAD_MARKS = re.compile("[่-๋]{2}|์[่-๋ัิ-ู]|[ัิ-ู]{2}|(?:^| )[ะาำิ-ู็-๎]")  # tone marks and vowels stacked or stranded as no Thai word has them
+
+
+def wisesight(pattern="wisesight/*.txt"):
+    """Social media posts and comments collected by Wisesight. Left out: a post with no verb (a product name
+    or a tag); one with two or more quoted phrases (a news headline); advertising and news copy, which shows
+    in promotion words or in a brand named twice with no "I", "you" or question in the post; and a post whose
+    letters are garbled (marks stacked as no Thai word has them)."""
+    for path in sorted(RAW.glob(pattern)):
+        with open(path, encoding="utf8") as lines:
+            for i, line in enumerate(lines):
+                brands = collections.Counter(b.casefold() for b in BRAND.findall(line))
+                advert = PROMO.search(line) or (brands and max(brands.values()) >= 2 and not PERSONAL.search(line))
+                if len(line.strip()) >= 15 and THAI_VERB.search(line) and line.count("“") < 2 and line.count('"') < 4 and not advert and not BAD_MARKS.search(line):
+                    yield f"wisesight-{path.stem}-{i}", line, "th"
+
+
+SUBTITLE_NOISE = re.compile(r"\[[^\]]*\]|\([^)]{0,40}\)|[♪♫#]|</?[a-z][^>]*>|\{[^}]*\}")  # [music], (sighs), notes, <i>, {\\an8}
+SUBTITLE_CREDIT = re.compile(r"(?i)sub(?:title)?s?\b|sync|www\.|\.com|แปลโดย|บรรยายไทย|ซับ(?!ซ้อน|น้ำ|เหงื่อ|ใน)|คำบรรยาย|ผู้แปล|ทีมงานแปล|แปลและเรียบเรียง|ช่วยแปล|ร่วมแปล|โดย .*(?:ทีม|team)"
+                             r"|ซีซั่น ?\d+.{0,30}(?:ฉาย|ออกอากาศ|กลับมา)|(?<![\d๐-๙])/(?![\d๐-๙])")  # the last: "อะไร/กูเอา...", two speakers on one line
+SUBTITLE_GAP = 2.0  # seconds between two lines of a film beyond which they are not joined, and the earlier one is not carried as context
+LEFT_HANGING = re.compile("(?:…|\\.\\.+|,|-)$")
+SUBORDINATE = re.compile(THAI_IF.pattern + "|การที่")  # opens a clause that needs another to finish it
+CLOSED = re.compile("(?:ครับ|ค่ะ|คะ|จ้ะ|จ้า|นะ|สิ|เถอะ|หรอก|ล่ะ|ไหม|มั้ย|เหรอ|หรอ)[!?.]*$|[!?]$")  # a line that has finished: the next is another sentence, often another speaker
+FEMALE = re.compile("ค่ะ|คะ(?![\u0e01-\u0e4e])")  # a woman's polite particle; "คะ" not at the start of a longer word such as คะแนน
+LYRIC = re.compile(r"^\s*-?\s*[♪♫#]|[♪♫#]\s*$")  # a music mark at either end of the raw line
+MOJIBAKE = re.compile("เธ[\x80-\x9f฀-๿]|เน[\x80-\x9f]")  # Thai in UTF-8 read as TIS-620: every letter turns into "เธ" or "เน" and one more
+# A cheap sign of machine translation: rude and polite pronouns in one line, and "ผมนั้น", "ฉันนั้น".
+MIXED_REGISTER = re.compile("(?:กู|มึง).*(?:คุณ|นาย|ผม|ดิฉัน)|(?:คุณ|นาย|ผม|ดิฉัน).*(?:กู|มึง)|ผมนั้น|ฉันนั้น")
+# Two better signs, counted per subtitle file. People who subtitle by hand write the particles of speech; a machine
+# of the time wrote none, and kept every English possessive ("my", "your") that Thai leaves out.
+SPOKEN_PARTICLE = re.compile("ครับ|ค่ะ|คะ|นะ|สิ|เถอะ|เลย|หรอก|ล่ะ|จ้ะ|น่ะ|ซิ|เหรอ|หรอ|มั้ย|ไหม|ไง|เนี่ย|แหละ|อ่ะ|วะ|ว่ะ|จัง")
+POSSESSIVE = re.compile("ของ(?:ฉัน|คุณ|เขา|เรา|มัน|พวกเขา|พวกเรา|ผม|เธอ)")
+# Words that show a short line is something said, not a bare name or noun phrase: common verbs, adjectives, particles and question words.
+SAID_WORD = re.compile("ขอ|เจอ|รู้|ดู|พูด|บอก|กิน|รัก|ชอบ|กลัว|เชื่อ|คิด|เห็น|ฟัง|หยุด|รอ|ช่วย|ตาย|ฆ่า|หนี|วิ่ง|เดิน|นั่ง|นอน|ตื่น|ใช่|ดี|สวย|เร็ว|แน่|จริง|พอ|เอา|หา|ถาม|ตอบ|เข้า|ออก|ขึ้น|ลง|กลับ|ลืม|จำ"
+                       "|เสียใจ|ขอบ|สวัสดี|โอเค|ไหม|มั้ย|เหรอ|หรอ|ล่ะ|นะ|สิ|เถอะ|ครับ|ค่ะ|คะ|อะไร|ทำไม|ใคร|ไหน|เมื่อไหร่|ยังไง|เท่าไหร่|อย่า|เชิญ|ระวัง|เงียบ|ปล่อย|จับ|ยิง|เปิด|ปิด|ส่ง|รับ|ซื้อ|ขาย"
+                       "|เล่น|เรียน|สอน|อ่าน|เขียน|ร้อง|หัวเราะ|ยิ้ม|โกรธ|เกลียด|เหนื่อย|หิว|ง่วง|เจ็บ|ป่วย|สบาย|แย่|เยี่ยม|ถูก|ผิด|มาก|แล้ว|ยัง|อีก|ด้วย|หน่อย|ซะ|ลอง|อยาก|ต้องการ|หวัง|หลับ|หาย|เกิด"
+                       "|ชนะ|แพ้|สู้|ช้า|เดี๋ยว|ก่อน|พร้อม|เสร็จ|จบ|เริ่ม|เลิก|ฉัน|ผม|คุณ|เขา|เค้า|เธอ|เรา|มัน|ข้า|เจ้า|แก|นาย|หนู|กำลัง|หรือ|เอง|ทันที|จัดการ|หุบ|สวัสดิ์|สุดยอด|เปลี่ยน|นี่|นั่น|นี้|นั้น|ยอด|บ้า|เยอะ|น้อย|ใหญ่|เล็ก"
+                       "|ร้อน|หนาว|เย็น|สนุก|เบื่อ|เหงา|รีบ|ยืน|ถือ|วาง|ดึง|ผลัก|ตี|ต่อย|เตะ|โทร|ขับ|บิน|ว่าย|ล้าง|แต่ง|หยิบ|ยก|ทิ้ง|เก็บ|ซ่อน|ค้น|ตาม|นำ|พา|ย้าย|ถอย|หลบ|ซวย|เฮง|แน่ะ|เว้ย|โว้ย|เหอะ|น่า|ฮะ|จ๊ะ|จ้ะ|ขา")  # ponytail: a word list, not a tagger; it errs towards keeping a line
+FILM_LINES = collections.defaultdict(lambda: [0, 0, 0])  # film id -> [subtitle lines read, lines joined to the one before, lines with mixed register]
+FILE_SIGNS = {}  # "film/file" -> [Thai lines, lines with a spoken particle, possessives]
+SUBTITLE_DROPS = collections.Counter()  # what the subtitle reader repaired, refused and left out, by rule
+STAMP = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)$")
+
+
+def subtitle_seconds(stamp):
+    """Seconds of "00:02:13,830", or None for the few stamps that are malformed."""
+    m = STAMP.match(stamp or "")
+    return int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3]) + float("0." + m[4]) if m else None
+
+
+def hangs(text):
+    """Whether a subtitle line stops before its sentence does."""
+    bare_line = text.rstrip(" .…,-")
+    return bool(LEFT_HANGING.search(text) or THAI_DANGLING.search(bare_line) or (SUBORDINATE.match(bare_line) and not THAI_THEN.search(bare_line)))
+
+
+def unscrambled(text):
+    """Thai that was stored as UTF-8 and read as TIS-620, read properly again, or None if it is not that."""
+    try:
+        return bytes(ord(c) if ord(c) < 256 else c.encode("cp874")[0] for c in text).decode("utf8")
+    except (UnicodeError, ValueError):
+        return None
+
+
+# A line that is only somebody being called: a title or kin word with a name, or a name with a Japanese or Korean honorific.
+NAME_CALL = re.compile("(?!.*(?:ไหม|มั้ย|อะไร|เปล่า|ไง|เหรอ|หรอ|รึ))(?:(?:คุณ|พี่|น้อง|ลุง|ป้า|น้า|ครู|หมอ|ท่าน|นาย|เจ้า)\\S{0,12} ?\\S{0,8}|\\S+ ?\\S*(?:ซัง|คุง|จัง|ซามะ|นิม|ซอนแบ))[!?.]*$")
+
+
+def opensubtitles(path="opensubtitles/th.zip"):
+    """Thai film and television subtitles from OPUS OpenSubtitles v2018, a sentence a row. The row id holds the
+    film's IMDb number, the subtitle file's number and the line's number.
+
+    A file whose Thai was read in the wrong encoding (MOJIBAKE in over 30% of lines) is read properly again,
+    or left out if that fails.
+
+    A sentence is often split across two screens. So a line is joined to the one before it, in the same file
+    and within SUBTITLE_GAP seconds, when that one hangs (it ends in "...", a comma or a dangling word, or opens
+    a clause that needs another) or this one opens with "..." or a joining word, as long as the two fit a row.
+    A join never crosses a change of speaker: not after a line that has finished (CLOSED), not onto a line the
+    file marks with a dialogue dash, and not between ค่ะ and ครับ.
+
+    Left out: song lyrics (a music mark at either end of the raw line, and the lines between an opening mark
+    and its closing one), credit and fansubber lines, a line where "/" runs two speakers together, a line that
+    only calls somebody, a line under 20 Thai letters with no word that shows something is being said (a bare
+    name or noun phrase), and a half sentence that found nothing to join. A row carries the row before it as context when no more than SUBTITLE_GAP
+    seconds separate them and nothing between them was left out.
+
+    Nothing here judges quality: every film is read. FILM_LINES and FILE_SIGNS record what was read, joined and
+    flagged, for the reduction to use."""
+    with zipfile.ZipFile(RAW / path) as archive:
+        for name in sorted(n for n in archive.namelist() if n.endswith(".xml")):
+            film, file_id = name.split("/")[-2], name.split("/")[-1][:-4]
+            try:
+                sentences_here = [(s.get("id"), "".join(s.itertext()), [t for t in map(subtitle_seconds, (t.get("value") for t in s.iter("time"))) if t is not None])
+                                  for s in ET.fromstring(archive.read(name)).iter("s")]
+            except ET.ParseError:
+                continue
+            if sum(bool(MOJIBAKE.search(raw)) for _, raw, _ in sentences_here) > 0.3 * len(sentences_here):
+                repaired = [(sid, unscrambled(raw), times) for sid, raw, times in sentences_here]
+                if sum(raw is None for _, raw, _ in repaired) > 0.1 * len(repaired):
+                    SUBTITLE_DROPS["files in the wrong encoding, left out"] += 1
+                    continue
+                SUBTITLE_DROPS["files in the wrong encoding, read properly"] += 1
+                sentences_here = [(sid, raw or "", times) for sid, raw, times in repaired]
+            signs = FILE_SIGNS.setdefault(f"{film}/{file_id}", [0, 0, 0])
+            rows, ended, singing = [], None, False  # rows: [id, text, start, end], or None where a line was left out
+            for sid, raw, times in sentences_here:
+                lyric = singing or bool(LYRIC.search(raw))
+                singing = (singing or bool(re.match(r"\s*-?\s*[♪♫#]", raw))) and not re.search(r"[♪♫#]\s*$", raw)
+                dash = raw.lstrip().startswith("-")
+                text = clean(SUBTITLE_NOISE.sub(" ", raw)).lstrip("- ").strip()
+                start, ended = (times[0] if times else ended), (times[-1] if times else ended)
+                FILM_LINES[film][0] += 1
+                FILM_LINES[film][2] += bool(MIXED_REGISTER.search(text))
+                if len(text) >= 8 and len(THAI.findall(text)) >= 0.7 * len(text.replace(" ", "")):
+                    signs[0] += 1
+                    signs[1] += bool(SPOKEN_PARTICLE.search(text))
+                    signs[2] += len(POSSESSIVE.findall(text))
+                if lyric or not text or SUBTITLE_CREDIT.search(text):
+                    SUBTITLE_DROPS["lyric lines" if lyric else "credit lines" if text else "empty lines"] += 1
+                    rows.append(None)
+                    continue
+                last = rows[-1] if rows else None
+                close = last and start is not None and last[3] is not None and start - last[3] <= SUBTITLE_GAP
+                other_speaker = dash or (last and (CLOSED.search(last[1]) and not LEFT_HANGING.search(last[1]) or "ครับ" in last[1] and FEMALE.search(text) or FEMALE.search(last[1]) and "ครับ" in text))
+                joins = close and len(last[1]) + len(text) < MAX_CHARS["th"] and (hangs(last[1]) or text.startswith(("..", "…")) or SPOKEN_LEANS.match(text))
+                SUBTITLE_DROPS["joins refused at a change of speaker"] += bool(joins and other_speaker)
+                if joins and not other_speaker:
+                    last[1] = f"{last[1].rstrip(' .…-')} {text.lstrip(' .…')}"
+                    last[3] = ended
+                    FILM_LINES[film][1] += 1
+                else:
+                    rows.append([f"opensubtitles-{film}-{file_id}-{sid}", text, start, ended])
+            previous = None
+            for row in rows:
+                if row is None:
+                    previous = None
+                    continue
+                row_id, text, start, end = row
+                called = len(text.split()) <= 2 and len(text) <= 14 and NAME_CALL.match(text) and not THAI_VERB.search(text)
+                bare_phrase = len(THAI.findall(text)) < 20 and not THAI_VERB.search(text) and not SAID_WORD.search(text)
+                stem = text.rstrip(" .…,-")  # a half sentence that found nothing to join: it ends in a joining word, or opens a clause and trails off
+                half = THAI_DANGLING.search(stem) and not stem.endswith("หรือ") or re.match("แต่|ถ้า|เพราะ", text) and LEFT_HANGING.search(text)  # "หรือ" also ends a spoken question
+                if called or bare_phrase or half:
+                    SUBTITLE_DROPS["lines that only call somebody" if called else "bare names and noun phrases" if bare_phrase else "half sentences"] += 1
+                    previous = None
+                    continue
+                near = previous and start is not None and previous[1] is not None and start - previous[1] <= SUBTITLE_GAP
+                yield row_id, text, "th", previous[0] if near else None
+                previous = (text, end)
+
+
+REVIEW_LABEL = re.compile(r"\s*(?:[-•*●▪►✔️✅#]|\d+[.)]|(?:รสชาติ|บริการ|ราคา|บรรยากาศ|ความสะอาด|คะแนน|สรุป|เมนู)\s*[\d:：=/])")
+
+
+# A short review line is a remark only if it holds a verb of eating or visiting, or a word of judgement.
+REVIEW_WORD = re.compile("อร่อย|ชอบ|แนะนำ|ดี|แย่|เยี่ยม|คุ้ม|แพง|ถูก|สด|หวาน|เค็ม|เผ็ด|เปรี้ยว|หอม|นุ่ม|กรอบ|สะอาด|ประทับใจ|ผิดหวัง|โอเค|เฉยๆ|ใช้ได้"
+                         "|กิน|ทาน|สั่ง|ลอง|ชิม|ไม่|มี(?!ด)|เป็น|ไป|อยู่|รอ|นั่ง|ขาย|เปิด|ปิด|บริการ|จอด")
+
+
+def wongnai(path="wongnai/review_dataset.zip"):
+    """Lines of restaurant reviews that Wongnai's users wrote. A review is typed as several lines, and each
+    line is a row. Lines that are a dish, a price or a rating, not a remark, are left out: bullets and
+    numbered items, lines with no verb (for a line under 40 Thai letters, no verb of eating or visiting and no
+    word of judgement), and lines where emoji were lost and left "??"."""
+    with zipfile.ZipFile(RAW / path) as archive:
+        for name, column in (("w_review_train.csv", 0), ("test_file.csv", 1)):
+            for i, row in enumerate(csv.reader(io.TextIOWrapper(archive.open(name), encoding="utf8", newline=""), delimiter=";")):
+                for n, line in enumerate(row[column].split("\n") if len(row) > column else ()):
+                    remark = REVIEW_WORD.search(line) if len(THAI.findall(line)) < 40 else THAI_VERB.search(line)
+                    if len(line.strip()) >= 20 and remark and "??" not in line and not REVIEW_LABEL.match(line):
+                        yield f"wongnai-{name[0]}{i}-{n}", line, "th"
 
 
 def wiki_pages(handle):
@@ -710,6 +995,11 @@ class Source:
     carried: bool = False  # a turn after the first is kept only with the line before it, and not when that line asks who the customer is
     max_chars: int = 0  # a row limit of its own, for the whole-paragraph sources
     max_pieces: int = 0
+    tier: int = 1  # 1: a clear licence from whoever owns the text. 2: public, with no stated licence, a licence on the packaging only, or an odd one
+    finding: str = ""  # what the licence check found, in a line, when it is more than the licence's name
+    read_on: str = ""  # the page the licence was read on, when it is not the licence's own address
+    score: str = ""  # the latest sample scores, good/flawed/unusable in 100, for the manifest
+    pool: str = ""  # "candidate": the source scored a little under the quality bar; its rows are kept, marked, for the later reduction
     use: str = ""  # "forward_only": the pair made from the row may be trained on as written, source to target, and never reversed
     repairs: str = ""  # what the extractor did to the text before any filter, recorded in the manifest
 
@@ -748,17 +1038,25 @@ SOURCES = (
     Source("dolly", "databricks-dolly-15k", "questions and answers", "CC BY-SA 3.0", "https://creativecommons.org/licenses/by-sa/3.0/",
            "Databricks, Inc.", "https://huggingface.co/datasets/databricks/databricks-dolly-15k", None, dolly, asked=True),
     Source("iapp", "iApp Wiki QA, questions", "questions and answers", "MIT", MIT,
-           "Copyright (c) 2021 iApp Technology Co., Ltd.", "https://github.com/iapp-technology/iapp-wiki-qa-dataset", 0, iapp),  # 76 good rows in 100 after the tidy pass: not taken
+           "Copyright (c) 2021 iApp Technology Co., Ltd.", "https://github.com/iapp-technology/iapp-wiki-qa-dataset", None, iapp, pool="candidate", score="76/24/0; 82/18/0 independent"),
     Source("lotusdis", "LOTUSDIS", "spoken conversation", "CC BY-SA 4.0", BY_SA,
            "NECTEC, National Science and Technology Development Agency, Thailand",
-           "https://huggingface.co/datasets/nectec/LOTUSDIS", 0, lotusdis, spoken=True),  # 78 whole utterances in 100, under the bar of 85: built and counted, not taken
+           "https://huggingface.co/datasets/nectec/LOTUSDIS", None, lotusdis, spoken=True, pool="candidate", score="78/22/0"),
     Source("yodas", "YODAS, Thai uploader-supplied captions (th000)", "spoken, video captions", "CC BY 3.0", "https://creativecommons.org/licenses/by/3.0/",
            "The uploader of each video. Each row's id holds the video id, https://www.youtube.com/watch?v=<id>. Collected by Li and others, YODAS, 2023",
-           "https://huggingface.co/datasets/espnet/yodas", 0, yodas, spoken=True),  # failed three independent samples: presenter monologue, not chat
+           "https://huggingface.co/datasets/espnet/yodas", None, yodas, spoken=True, tier=2, pool="candidate", score="81/18/1; 72/22/6 independent",
+           finding="CC BY 3.0 is each uploader's own claim for the video; it was not checked video by video", read_on="https://huggingface.co/datasets/espnet/yodas"),  # failed three independent samples: presenter monologue, not chat
     Source("oasst2_th", "OpenAssistant Conversations (OASST2), Thai", "questions typed to an assistant", "Apache-2.0", APACHE,
            "OpenAssistant contributors, LAION", "https://huggingface.co/datasets/OpenAssistant/oasst2", None, lambda: oasst2("th"), spoken=True),
     Source("commonvoice_th", "Common Voice sentences, Thai", "everyday sentences", "CC0 1.0", CC0,
            "None required", "https://github.com/common-voice/common-voice", None, common_voice_th),
+    Source("wangchan", "WangchanThaiInstruct, instructions of the CC BY-SA rows", "questions typed to an assistant", "CC BY-SA 4.0", BY_SA,
+           "VISTEC and AIResearch.in.th. Each row's id holds the dataset's own ID", "https://huggingface.co/datasets/airesearch/WangchanThaiInstruct", None, wangchan, spoken=True,
+           finding="each row has its own licence: 5,014 are CC BY-SA 4.0 and are read, 34,986 are CC BY-NC 4.0 and are not",
+           read_on="https://huggingface.co/datasets/airesearch/WangchanThaiInstruct"),
+    Source("commonvoice_th_collector", "Common Voice sentences, Thai, sentence collector file", "everyday sentences", "CC0 1.0", CC0,
+           "None required", "https://github.com/common-voice/common-voice", None, common_voice_collector, pool="candidate",
+           score="80/19/1, with about a third of rows read as machine translation"),
     Source("tatoeba_th", "Tatoeba, Thai", "everyday sentences", "CC BY 2.0 FR", "https://creativecommons.org/licenses/by/2.0/fr/",
            "Tatoeba contributors, each row's id holds the sentence number, https://tatoeba.org/sentences/show/<number>",
            "https://tatoeba.org", None, lambda: tatoeba("tatoeba/tha_sentences_detailed.tsv", "th")),
@@ -790,18 +1088,50 @@ SOURCES = (
            "As for voathai", "https://github.com/bltlab/mot", None, lambda: whole_paragraphs(voa_thai()), prose=True, royal=True, reported=True, **PARAGRAPH),
     Source("thailaw", "Thai Law Dataset v1.0, sections of Acts and decrees", "legal", "Public domain (Thai Copyright Act, section 7)", CC0,
            "Collected by PyThaiNLP (Wannaphong Phatthiyaphaibun), released CC0. Each row's id holds the document's number in the dataset",
-           "https://huggingface.co/datasets/pythainlp/thailaw-v1.0", 50_000, thai_law, prose=True),
+           "https://huggingface.co/datasets/pythainlp/thailaw-v1.0", None, thai_law, prose=True),
+    Source("thailaw_clauses", "Thai Law Dataset v1.0, clauses of announcements and regulations", "legal", "Public domain (Thai Copyright Act, section 7)", CC0,
+           "As for thailaw", "https://huggingface.co/datasets/pythainlp/thailaw-v1.0", None, lambda: thai_law("thailawc", CLAUSE), prose=True),
+    Source("court", "Thai Supreme Court judgments (deka-bulk)", "legal", "Public domain (Thai Copyright Act, section 7)", CC0,
+           "Supreme Court of Thailand, collected by Korakot Chaovavanich. Each row's id holds the judgment's docid",
+           "https://huggingface.co/datasets/korakot/deka-bulk", None, supreme_court, prose=True,
+           finding="judgments are not copyright works (section 7(4)); the collection is CC0. Headnotes written by the Thai Bar are not read",
+           read_on="https://huggingface.co/datasets/korakot/deka-bulk"),
     Source("thwiki", "Thai Wikipedia", "encyclopaedic", "CC BY-SA 4.0", BY_SA,
            "Wikipedia " + WIKIMEDIA.format("th.wikipedia.org"), "https://th.wikipedia.org", None,
            lambda: wiki("thwiki", "th"), prose=True, royal=True, use="forward_only"),  # good enough to read, not to imitate
     Source("thwiki_para", "Thai Wikipedia, whole paragraphs", "encyclopaedic", "CC BY-SA 4.0", BY_SA,
-           "As for thwiki", "https://th.wikipedia.org", 0, lambda: whole_paragraphs(wiki("thwiki", "th")), prose=True, royal=True, **PARAGRAPH),  # 67 good rows in 100: not taken
+           "As for thwiki", "https://th.wikipedia.org", None, lambda: whole_paragraphs(wiki("thwiki", "th")), prose=True, royal=True, pool="candidate",
+           score="67/33/0 strict; 79/21/0 independent", **PARAGRAPH),
     Source("simplewiki", "Simple English Wikipedia", "plain-language encyclopaedic", "CC BY-SA 4.0", BY_SA,
            "Wikipedia " + WIKIMEDIA.format("simple.wikipedia.org"), "https://simple.wikipedia.org", None,
            lambda: wiki("simplewiki", "en", 20), prose=True, strict=True, royal=True, stubs=True),
     Source("commonvoice_wiki", "Common Voice sentences taken from English Wikipedia", "encyclopaedic", "CC0 1.0", CC0,
            "None required", "https://github.com/common-voice/common-voice", None, common_voice_wiki, prose=True, strict=True, stubs=True),
+    # Tier 2 last of all, so that no tier 1 source loses a duplicate to a row that may later be taken out.
+    Source("opensubtitles_th", "OpenSubtitles Thai (OPUS OpenSubtitles v2018)", "film and television dialogue", "Unstated", "https://opus.nlpl.eu/legacy/OpenSubtitles-v2018.php",
+           "OpenSubtitles, http://www.opensubtitles.org/, and the subtitles' volunteer translators. Each row's id holds the film's IMDb number and the subtitle file's number. "
+           "Collected by Lison and Tiedemann, OPUS", "http://www.opensubtitles.org/", None, opensubtitles, spoken=True, tier=2, pool="candidate", score="80/16/4; 74/24/2 independent",
+           finding="no licence is stated: OPUS asks only \"Please, add a link to http://www.opensubtitles.org/\". The site's robots.txt carries \"Content-Signal: search=yes,ai-train=no\" (read 11 November 2026). "
+                   "The subtitles are volunteers' translations of films and programmes",
+           read_on="https://opus.nlpl.eu/legacy/OpenSubtitles-v2018.php"),
+    Source("wisesight", "Wisesight Sentiment Corpus", "social media posts", "CC0 1.0", CC0,
+           "Wisesight (Thailand) Co., Ltd. and the posts' authors", "https://github.com/PyThaiNLP/wisesight-sentiment", None, wisesight, spoken=True, tier=2, pool="candidate", score="89/6/5; 82/13/5 independent",
+           finding="the compiler waived all rights (CC0 1.0); the posts are third parties'",
+           read_on="https://github.com/PyThaiNLP/wisesight-sentiment/blob/c1d063649abc3a6870b5fd1aae26cd1c64bdde7b/README.md"),
+    Source("truevoice", "TrueVoice intent, customer utterances", "call-centre requests", "Apache-2.0", APACHE,
+           "TrueVoice, published by Kobkrit Viriyayudhakorn", "https://github.com/kobkrit/truevoice-intent", None, truevoice, spoken=True, tier=2,
+           finding="Apache-2.0 in an individual's repository; TrueVoice's own grant was not found, and the speakers are its customers",
+           read_on="https://github.com/kobkrit/truevoice-intent/blob/9f01a028ebce755c40aebda95913117be0edac9c/LICENSE"),
+    Source("wongnai", "Wongnai review corpus, review lines", "restaurant reviews", "LGPL-3.0", "https://www.gnu.org/licenses/lgpl-3.0.html",
+           "Wongnai and the reviews' authors. Each row's id holds the file and the review's row number",
+           "https://github.com/wongnai/wongnai-corpus", None, wongnai, spoken=True, tier=2,
+           finding="LGPL-3.0, a software licence, from the platform itself. The reviews are its users'. Its terms of service (amended 5 September 2024) "
+                   "forbid users to collect reviews for any purpose \"เว้นแต่จะได้รับอนุญาตจากทางบริษัท\" (unless the company permits); this corpus is the company's own release",
+           read_on="https://github.com/wongnai/wongnai-corpus/blob/113ad2962374fa3274eeed7e4aa74540472e3bd5/LICENSE"),
 )
+# Sources that passed the quality bar are read before the candidate pool, and tier 1 before tier 2, each group in
+# the order above. So no row is dropped as the duplicate of one that the later reduction, or leaving tier 2 out, may remove.
+SOURCES = tuple(sorted(SOURCES, key=lambda s: (s.tier, s.pool == "candidate")))
 
 
 # ---------------------------------------------------------------- filters
@@ -971,7 +1301,7 @@ def sift(source, batch, pieces, blocked, benchmark, seen, openers, counts):
             counts[reason] += 1
         else:
             rows.append({"id": row_id, "text": text, "lang": lang, "source": source.name, "register": source.register, "licence": source.licence}
-                        | ({"context": context} if context else {}) | ({"repairs": repairs} if repairs else {}) | ({"use": source.use} if source.use else {}))
+                        | ({"context": context} if context else {}) | ({"repairs": repairs} if repairs else {}) | ({"use": source.use} if source.use else {}) | ({"pool": source.pool} if source.pool else {}) | {"tier": source.tier})
     kept = []
     for r, size in zip(rows, pieces([r["text"] for r in rows])):
         mark = digest(template(r["text"]))
@@ -1057,8 +1387,14 @@ def downloads():
         "lotusdis/transcripts.jsonl": LOTUSDIS,  # text columns only, read out of the audio files by fetch_lotusdis
     }
     files |= {f"thailaw/{i}.parquet": f"{HF}/pythainlp/thailaw-v1.0/resolve/4c1e2c091b15b5f01d836d5a23398594157e021c/data/train-0000{i}-of-00002.parquet" for i in range(2)}
+    files |= {f"court/{y}.parquet": f"{HF}/korakot/deka-bulk/resolve/67992f340c330108dd65cd93758cc605aef8033d/data/{y}.parquet" for y in range(2463, 2570) if y != 2476}
+    files |= {"wongnai/review_dataset.zip": f"{GH}/wongnai/wongnai-corpus/113ad2962374fa3274eeed7e4aa74540472e3bd5/review/review_dataset.zip",
+              "truevoice/mari-intent.zip": f"{GH}/kobkrit/truevoice-intent/9f01a028ebce755c40aebda95913117be0edac9c/mari-intent.zip",
+              "wangchan/train.parquet": f"{HF}/airesearch/WangchanThaiInstruct/resolve/9099b833a1b6b9d471d7e6f4abb22bf88f318bd4/data/train-00000-of-00001.parquet"}
+    files |= {f"wisesight/{n}.txt": f"{GH}/PyThaiNLP/wisesight-sentiment/c1d063649abc3a6870b5fd1aae26cd1c64bdde7b/{n}.txt" for n in ("neg", "neu", "pos", "q")}
+    files["opensubtitles/th.zip"] = "https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2018/raw/th.zip"
     files |= {f"yodas/{i:08}.txt": f"{YODAS}/{i:08}.txt" for i in range(52)}
-    files |= {f"commonvoice/th-{n}": f"{COMMON_VOICE}/th/{n}" for n in ("Wannaphong.txt", "thsentences.txt")}
+    files |= {f"commonvoice/th-{n}": f"{COMMON_VOICE}/th/{n}" for n in ("Wannaphong.txt", "thsentences.txt", "sentence-collector.txt")}
     files |= {f"iapp/{s}.parquet": f"{HF}/iapp/iapp_wiki_qa_squad/resolve/c4e4341d5dca5bbf29e5c00f53e8391050050cd1/data/{s}-00000-of-00001.parquet" for s in ("train", "validation", "test")}
     files |= {f"soda/{s}.parquet": f"{HF}/allenai/soda/resolve/fdc848ab0183208ea7808206c91c724414d0a071/{s}.parquet" for s in ("train", "valid", "test")}
     files |= {f"taskmaster2/{n}.json": f"{TASKMASTER}/TM-2-2020/data/{n}.json"
@@ -1178,6 +1514,8 @@ def candidates():
             report[source.name] = dict(counts)
             print(source.name, report[source.name], file=sys.stderr)
     (OUT / "filtered.json").write_text(json.dumps({"files": files, "sources": report}, indent=1) + "\n", encoding="utf8")
+    (OUT / "films_read.json").write_text(json.dumps({"films": dict(sorted(FILM_LINES.items())), "files": dict(sorted(FILE_SIGNS.items())),
+                                                     "reader": dict(sorted(SUBTITLE_DROPS.items()))}) + "\n", encoding="utf8")
 
 
 def near_keys(norm):
@@ -1229,24 +1567,28 @@ def near():
     print(json.dumps({"near duplicates": dict(dropped), "usable": sum(kept.values())}), file=sys.stderr)
 
 
-def mix():
-    """Take each source's share of the candidates and write sources.jsonl and manifest.json."""
+def mix(tiers=(1, 2)):
+    """Take each source's share of the candidates and write sources.jsonl and manifest.json. A source whose
+    licence tier is not in tiers gives nothing: `mix_tier1` builds the set from tier 1 alone."""
     counted = json.loads((OUT / "candidates.json").read_text(encoding="utf8"))
     ranks = {s.name: array.array("Q") for s in SOURCES}
     for r in jsonl(OUT / "candidates.jsonl"):
         ranks[r["source"]].append(rank(r["id"]))
     cut = {s.name: (1 << 64) if s.take is None or s.take >= len(ranks[s.name]) else sorted(ranks[s.name])[s.take - 1] if s.take else -1 for s in SOURCES}
-    total = collections.Counter()
+    cut |= {s.name: -1 for s in SOURCES if s.tier not in tiers}
+    total, films = collections.Counter(), collections.Counter()
     lengths = collections.defaultdict(lambda: (array.array("H"), array.array("H")))
     sha = hashlib.sha256()
     with open(OUT / "sources.jsonl", "wb") as out:
         for r in jsonl(OUT / "candidates.jsonl"):
             if rank(r["id"]) <= cut[r["source"]]:
                 size = r.pop("pieces")
+                if r["source"] == "opensubtitles_th":
+                    films[r["id"].split("-")[1]] += 1
                 for group in (r["lang"], "all"):
                     lengths[group][0].append(len(r["text"]))
                     lengths[group][1].append(size)
-                total.update([("source", r["source"]), ("lang", r["lang"]), ("register", r["register"]), ("licence", r["licence"]), ("use", r.get("use", "both_directions"))])
+                total.update([("source", r["source"]), ("lang", r["lang"]), ("register", r["register"]), ("licence", r["licence"]), ("use", r.get("use", "both_directions")), ("tier", str(r["tier"])), ("pool", r.get("pool", "passed"))])
                 line = (json.dumps(r, ensure_ascii=False) + "\n").encode()
                 sha.update(line)
                 out.write(line)
@@ -1256,21 +1598,294 @@ def mix():
 
     manifest = {
         "retrieved": RETRIEVED, "rows": sum(by("lang").values()), "sha256": sha.hexdigest(),
-        "by_language": by("lang"), "by_register": by("register"), "by_licence": by("licence"), "by_use": by("use"),
+        "by_language": by("lang"), "by_register": by("register"), "by_licence": by("licence"), "by_use": by("use"), "by_tier": by("tier"), "by_pool": by("pool"), "tiers_included": list(tiers),
         "lengths": {group: {"characters_mean": round(sum(chars) / len(chars), 1), "characters_p95": percentile(chars, 0.95),
                             "pieces_mean": round(sum(sizes) / len(sizes), 1), "pieces_p95": percentile(sizes, 0.95)}
                     for group, (chars, sizes) in sorted(lengths.items())},
-        "sources": {s.name: {"title": s.title, "repairs": s.repairs, "use": s.use or "both_directions", "register": s.register, "licence": s.licence, "licence_url": s.licence_url,
+        "sources": {s.name: {"title": s.title, "repairs": s.repairs, "use": s.use or "both_directions", "tier": s.tier, "pool": s.pool or "passed", "last_score": s.score,
+                             "licence_finding": s.finding or s.licence, "licence_read_on": s.read_on or s.licence_url, "register": s.register, "licence": s.licence, "licence_url": s.licence_url,
                              "credit": s.credit, "homepage": s.homepage, **counted["sources"][s.name],
                              "target": s.take, "in_mix": total["source", s.name]} for s in SOURCES},
         "files": counted["files"],
     }
+    if (OUT / "films_read.json").exists():  # per film and per subtitle file: what was read and what is in the mix, for the reduction
+        read = json.loads((OUT / "films_read.json").read_text(encoding="utf8"))
+        files = collections.defaultdict(dict)
+        for name, (lines, particles, possessives) in read["files"].items():
+            film, file_id = name.split("/")
+            files[film][file_id] = {"thai_lines": lines, "particle_rate": round(particles / lines, 3) if lines else 0, "possessive_rate": round(possessives / lines, 3) if lines else 0}
+        (OUT / "films.json").write_text(json.dumps({film: {"read": n, "in_mix": films[film], "dropped_share": round(1 - (films[film] + joined) / n, 3) if n else 0,
+                                                           "joined_share": round(joined / n, 3) if n else 0, "mixed_register_lines": mixed, "files": files[film]}
+                                                    for film, (n, joined, mixed) in read["films"].items()}, indent=0) + "\n", encoding="utf8")
+        manifest["films"] = {"file": "films.json", "films": len(read["films"]), "with_rows": sum(1 for film in read["films"] if films[film]),
+                             "subtitle_files": len(read["files"]), "reader": read["reader"]}
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False) + "\n", encoding="utf8")
     print(json.dumps({k: manifest[k] for k in ("rows", "by_language", "by_register", "lengths")}, indent=1, ensure_ascii=False))
 
 
+# ---------------------------------------------------------------- the reduction: from the pool to the set to translate
+
+# Thai sources of the candidate pool that go into the reduced set all the same. opensubtitles_th is a little under
+# the bar (81 good rows in 100): it is in because it is the only large conversational Thai, by the owner's choice.
+ADMITTED = frozenset({"opensubtitles_th", "wisesight"})
+FILM_DROPPED = 0.7  # a film that lost this share of its subtitle lines to the filters is left out whole
+FILM_MIXED = 0.01  # so is one where this share of lines mixes rude and polite pronouns, a sign of machine translation
+FILE_MACHINE = 0.04  # a subtitle file is left out when its rate of lines with a spoken particle, less its rate of possessives, is under this
+FILE_LINES = 50  # and it has at least this many Thai lines to judge by
+SHORT_THAI = 8  # Thai letters under which a row is too short to teach
+SHORT_ENGLISH = 3  # English words
+SHORT_KEEP = 20  # rows of one short reply ("ใช่ครับ", "ขอบคุณ") kept, each with the line it answers
+# Final particles that do not change what a Thai sentence says. Two rows that differ only in these are one sentence.
+PARTICLES = re.compile("(?:ครับผม|ครับ|ค่ะ|คะ|นะ|จ้ะ|จ้า|เลย|สิ|ซิ|หรอก|น่ะ|อ่ะ|ล่ะ|เถอะ|ด้วย)+$")
+JUNK = (  # what no model should learn from, each with the rule's name. Order matters: a row counts under the first that fits.
+    ("credit or boilerplate", re.compile(r"(?i)\bsubtitles? by\b|\bsync(?:ed)? by\b|all rights reserved|click here|แปลโดย|ซับไทย|บรรยายไทย|กดไลค์|กดติดตาม|อ่านต่อ(?:ได้)?ที่")),
+    ("leftover markup", re.compile(r"</?[a-zA-Z][^>]{0,20}>|&(?:amp|nbsp|lt|gt|quot|#\d+);|\{\\|\\[Nn]\b|\[/?[a-z]+\]|https?:")),
+    ("repeated characters", re.compile(r"(.)\1{5,}")),
+)
+
+
+def bare(text):
+    """A row's text without what does not change what it says: case, width, punctuation, spacing, which digits,
+    and for Thai the final particles. Returns that text and the particles that were taken off."""
+    norm = PUNCTUATION.sub("", re.sub(r"[\d๐-๙]", "0", unicodedata.normalize("NFKC", text).casefold()))
+    core = PARTICLES.sub("", norm) or norm
+    return core, norm[len(core):]
+
+
+def look_alike(text):
+    """(key, politeness) of a row. Rows with one key say the same thing: their bare() text is the same.
+    Politeness is "male" for a sentence that closes with ครับ, "female" for ค่ะ or คะ, and "plain" otherwise."""
+    core, tail = bare(text)
+    return digest(core), "male" if "ครับ" in tail else "female" if "ค่ะ" in tail or "คะ" in tail else "plain"
+
+
+def junk(row):
+    """The name of the rule under which a row is not worth translating whatever its source, or None."""
+    text = row["text"]
+    solid = text.replace(" ", "")
+    if sum(c.isdigit() for c in solid) > 0.3 * len(solid):
+        return "mostly numbers"
+    if row["lang"] == "th" and len(LATIN.findall(text)) > 0.3 * len(solid):
+        return "mostly the other language"
+    return next((name for name, pattern in JUNK if pattern.search(unicodedata.normalize("NFKC", text))), None)
+
+
+def too_short(row):
+    """Thai is measured without its final particles: "ขอโทษนะคะ" is the five letters of "ขอโทษ"."""
+    return len(bare(row["text"])[0]) < SHORT_THAI if row["lang"] == "th" else len(row["text"].split()) < SHORT_ENGLISH
+
+
+def reduce(tiers=(1, 2)):
+    """Reduce the pool, sources.jsonl, to the set that would be translated: distill_set.jsonl, with what each
+    rule removed from each source in distill_set.json. The pool is not changed, so it can be reduced again
+    with other rules. A row is counted under the first rule that removes it, in this order:
+
+    1. its licence tier is not in tiers (`reduce_tier1` leaves tier 2 out);
+    2. its source is in the candidate pool and not in ADMITTED;
+    3. it is a subtitle line of a film in the worst band (FILM_DROPPED, FILM_MIXED, from films.json), or of a
+       subtitle file that reads as raw machine translation (FILE_MACHINE);
+    4. junk a rule can find (JUNK, mostly numbers, mostly the other language);
+    5. too short to teach, unless it has a context line: then SHORT_KEEP rows of each short reply stay;
+    6. look-alike duplicates: one row per look_alike key. The row kept is of tier 1 before tier 2, then one
+       with context, then the longer text, then the earlier. A Thai sentence may stay once in each politeness
+       (ครับ, ค่ะ, neither), since a chat translator has to learn all three;
+    7. near-duplicates over the whole of what is left, across sources, by without_near_duplicates."""
+    pool = json.loads((OUT / "manifest.json").read_text(encoding="utf8"))
+    names = {s.name: s for s in SOURCES}
+    films = json.loads((OUT / "films.json").read_text(encoding="utf8")) if (OUT / "films.json").exists() else {}
+    bad_films = {f for f, v in films.items() if v["read"] and (v["dropped_share"] >= FILM_DROPPED or v["mixed_register_lines"] / v["read"] >= FILM_MIXED)}
+    machine = {(film, file_id) for film, v in films.items() for file_id, f in v.get("files", {}).items()
+               if f["thai_lines"] >= FILE_LINES and f["particle_rate"] - f["possessive_rate"] < FILE_MACHINE}
+    removed = collections.defaultdict(collections.Counter)
+    best, group_size, group_text, shorts, verdicts = {}, collections.Counter(), {}, collections.Counter(), array.array("b")
+    for n, r in enumerate(jsonl(OUT / "sources.jsonl")):
+        source = names[r["source"]]
+        reason = ("tier left out" if r["tier"] not in tiers else "candidate source not admitted" if source.pool and source.name not in ADMITTED
+                  else "film in the worst band" if source.name == "opensubtitles_th" and r["id"].split("-")[1] in bad_films
+                  else "machine-translated subtitle file" if source.name == "opensubtitles_th" and tuple(r["id"].split("-")[1:3]) in machine else junk(r))
+        code = 0  # 0 removed, 1 kept without a look-alike check (a short reply), 2 to be settled among its look-alikes
+        if not reason and too_short(r):
+            mark = look_alike(r["text"])[0]
+            reason = "too short" if "context" not in r else "short reply over the cap" if shorts[mark] >= SHORT_KEEP else None
+            shorts[mark] += not reason
+            code = 0 if reason else 1
+        elif not reason:
+            mark, politeness = look_alike(r["text"])
+            # one number that orders the rows of a group: tier 1, then context, then length, then the earlier row
+            worth = ((2 - r["tier"]) << 42) | (("context" in r) << 41) | (min(len(r["text"]), 511) << 32) | (0xFFFFFFFF - n)
+            slot = (mark, politeness)
+            group_size[mark] += 1
+            if group_size[mark] == 2:
+                group_text[mark] = r["text"][:80]
+            best[slot] = max(best.get(slot, 0), worth)
+            code = 2
+        if reason:
+            removed[reason][r["source"]] += 1
+        verdicts.append(code)
+    chosen = {0xFFFFFFFF - (worth & 0xFFFFFFFF) for worth in best.values()}
+    variants = len(best) - len({mark for mark, _ in best})
+    del best
+
+    def survivors():
+        for n, r in enumerate(jsonl(OUT / "sources.jsonl")):
+            if verdicts[n] == 1 or (verdicts[n] == 2 and n in chosen):
+                yield r
+
+    for n, r in enumerate(jsonl(OUT / "sources.jsonl")):
+        if verdicts[n] == 2 and n not in chosen:
+            removed["look-alike duplicate"][r["source"]] += 1
+    total, sha = collections.Counter(), hashlib.sha256()
+    lengths = collections.defaultdict(lambda: (array.array("H"), array.array("H")))
+    encode = __import__("train.tokenizer", fromlist=["Tokenizer"]).Tokenizer().encode
+    with open(OUT / "distill_set.jsonl", "wb") as out:
+        for batch in itertools.batched(without_near_duplicates(survivors, removed["near duplicate"]), 20000):
+            for r, pieces in zip(batch, encode([r["text"] for r in batch])):
+                total.update([("source", r["source"]), ("lang", r["lang"]), ("tier", str(r["tier"])), ("register", r["register"])])
+                for group in (r["lang"], "all"):
+                    lengths[group][0].append(len(r["text"]))
+                    lengths[group][1].append(len(pieces))
+                line = (json.dumps(r, ensure_ascii=False) + "\n").encode()
+                sha.update(line)
+                out.write(line)
+
+    def by(kind):
+        return {name: n for (k, name), n in sorted(total.items()) if k == kind}
+
+    largest = sorted(((size, group_text[mark]) for mark, size in group_size.items() if size > 1), reverse=True)
+    record = {
+        "pool": {"rows": pool["rows"], "sha256": pool["sha256"]}, "rows": sum(by("lang").values()), "sha256": sha.hexdigest(), "tiers_included": list(tiers),
+        "by_language": by("lang"), "by_tier": by("tier"), "by_register": by("register"),
+        "lengths": {group: {"characters_mean": round(sum(chars) / len(chars), 1), "pieces_mean": round(sum(sizes) / len(sizes), 1), "pieces_p95": percentile(sizes, 0.95)}
+                    for group, (chars, sizes) in sorted(lengths.items())},
+        "sources": {s.name: {"pool": pool["sources"][s.name]["in_mix"], "kept": total["source", s.name]} for s in SOURCES if pool["sources"][s.name]["in_mix"]},
+        "removed": {rule: dict(sorted(counts.items())) | {"all": sum(counts.values())} for rule, counts in removed.items()},
+        "look_alikes": {"groups": len(largest), "rows_in_groups": sum(size for size, _ in largest), "kept_as_politeness_variants": variants,
+                        "largest": [{"rows": size, "text": text} for size, text in largest[:25]]},
+        "films_left_out": len(bad_films), "subtitle_files_left_out_as_machine_translated": len(machine),
+        "rules": {"admitted_candidate_sources": sorted(ADMITTED), "film_dropped_share": FILM_DROPPED, "film_mixed_register_share": FILM_MIXED, "file_particle_less_possessive_under": FILE_MACHINE, "file_thai_lines_at_least": FILE_LINES,
+                  "short_thai_letters": SHORT_THAI, "short_english_words": SHORT_ENGLISH, "short_replies_kept": SHORT_KEEP,
+                  "near_duplicate": {"letters": NEAR_LETTERS, "key_letters": NEAR_KEY, "ratio": NEAR_RATIO}},
+    }
+    (OUT / "distill_set.json").write_text(json.dumps(record, indent=1, ensure_ascii=False) + "\n", encoding="utf8")
+    print(json.dumps({k: record[k] for k in ("rows", "by_language", "by_tier")} | {"removed": {rule: v["all"] for rule, v in record["removed"].items()}}, indent=1, ensure_ascii=False))
+
+
 # sha256 of every download. A file that no longer matches stops the build.
 PINS = {
+    "wisesight/neg.txt": "a58220b2221cc51e2072e676329b6a2249046ccc2e5692e53636430eaee82690",
+    "wisesight/neu.txt": "afe5cb9b3d09cff1ae482826e1aeebba402c602f451dc7d5198a725c1bcd44e3",
+    "wisesight/pos.txt": "a118567bfbf9e1aae0fcd621235a4b27319945746907c790cc6957aacab6a0a1",
+    "wisesight/q.txt": "446b7f2df273f4ab2037ad31e2576d8c0be6858b2ade9477d90a8fd8e0bb9f8a",
+    "opensubtitles/th.zip": "fc199e435e23d0a7e842ebfb50478c7961c4f26217b741b99bf5fb620b32f70b",
+    "court/2463.parquet": "f8c374e00ecb23ab573f3b73b192992cea5bb5695675e7955ffd79d7c30605df",
+    "court/2464.parquet": "057a53735e8dd7599057c6101d376fcbb8c30457931075c0baadb3bb445a927a",
+    "court/2465.parquet": "57298f28e11f9cb1a0d583cba56d029c17a76e4cee9bbe31d7b533e6903b8149",
+    "court/2466.parquet": "7665b80282b72d3b4ed02c226f57706378e982a34c25347bbf58b1d6a6651d50",
+    "court/2467.parquet": "18222000bee3df596d43779ab7524d7e6c4ad8d5d405fc2bbda6bf5369febd0d",
+    "court/2468.parquet": "b9d9974e6b5be161dc28cf7b070af6a7f0927366ed90f1675f94a5dee0f39565",
+    "court/2469.parquet": "18916f320b4f7dc92612b5ea6105a92b7916d10df367ac7cbe5cc0e6753c3b22",
+    "court/2470.parquet": "4c1c3af3de358e306868c2c1682142090b4922c9965c789f8d1e7d730800f70c",
+    "court/2471.parquet": "feab070ac9b6f340070f20f92158d32b390d06ef6d33c70cc58c679cba044ae9",
+    "court/2472.parquet": "dcfe77f6d8b9f9aac24d8eccf79188f93dff1beddda8059dda0b8e9362a7c305",
+    "court/2473.parquet": "258a4fb0c62f572ae1e72560aee7f4d9ace2331fd79978edf845b9152961677a",
+    "court/2474.parquet": "320bc1068658fdbd10d50072516b8f306237b8d0275cfa6a1e6725af45b9e0c5",
+    "court/2475.parquet": "6742899f39ecfbeaea10a8f6c535201854873e561f706992923e4bd1304d48f9",
+    "court/2477.parquet": "942c596eee994ec49bac7df16fe45593d086366087472f8f7ad837a4cdfabd96",
+    "court/2478.parquet": "b2681d90fb8239c005abb2eed304c29dfc9d20b5b57bbf6d8b4f9f0fe28d9adc",
+    "court/2479.parquet": "d199342995ca8589cfafe1d56e166c7008209d7205192c106d74bb6c128594d4",
+    "court/2480.parquet": "b359c5bbf5b90a1317b29ad9941cdb08d02ed2298c37ba8f7c4e9a5f6a5c48bb",
+    "court/2481.parquet": "81454bf0407aa81c414457bbf978ae4aaf19563bd90d1a3d04bc4ba44ee7eafc",
+    "court/2482.parquet": "bbe703ee23292396af00410450be458f05d3548a7a9f611619fd8f7afbdc33ad",
+    "court/2483.parquet": "727adcc19b779fd576db0382fd85ea91cb0972c72c14e8b2434987555f280baf",
+    "court/2484.parquet": "2a65d2b27651b901662595005335958f00bf9380ba1016599dddc578cd606df2",
+    "court/2485.parquet": "2b22ea6096626c3b413a94c376edb6d27492ab16cc291672c5b729b28ef460e9",
+    "court/2486.parquet": "88191995e1f1299605e23bd7378f676bd729ff207ba90084987397507584be56",
+    "court/2487.parquet": "e5c732c225932144c74f12792c8e702d44c41fd55e7b9a91f0e6cf9a9dc0a0fa",
+    "court/2488.parquet": "2526b6318a07245318f3ec57dc5ca40f6f8915af2a4bcca6893b32db91339ede",
+    "court/2489.parquet": "c53693e64e202790c15adc4e1164d7a725c450dedb1caeafcbb105e00df5bb59",
+    "court/2490.parquet": "82f0ee0db2ef4e38ba2df81c3ede8cd3a3952ed84feb38c1706c0b4d5106c248",
+    "court/2491.parquet": "b4277d610014b44addfed6df566a44467cd9c3776ed0b24ce1746a620e33c2f0",
+    "court/2492.parquet": "9e866e276efeef61a512fc69eb1822fff3eed34057db2fc938ce7987bf0140d3",
+    "court/2493.parquet": "1f8f33d05f49eb0f2fbcb1dbe63448ecc0cb682b2c99e16fc6334808f7822eb0",
+    "court/2494.parquet": "15421b4161ee7e9ebd1ae5c6bb42dd821a2b1b91843179b4d8cbbaa2727cddff",
+    "court/2495.parquet": "78d0c614e91f86c8550b2e3b4ef9117d5fff964945a27c511927015b7f712a94",
+    "court/2496.parquet": "f36524094a221bc6dfd63445e72e93c849b4b57270db16e7600663f1f54c60be",
+    "court/2497.parquet": "fdb0b6b618557c67dea3c991172078b1ce62c039fb1dc7710af34238200ca7d5",
+    "court/2498.parquet": "afc7255f0e122954e3530f5f37054c83d3d14649c94b48068ec2e60620b2e22c",
+    "court/2499.parquet": "925f1b59da77c329e9e8f6f5706ddb4d0dd3da3957d61ea4781f892aa6301ed9",
+    "court/2500.parquet": "1a07383361a323d8221e138741fe3beb0cf83f854a44a2eb6f819a6d8b84c336",
+    "court/2501.parquet": "b2de7cbbe82bed86feb646ba3a4fc7df45a68dd0dfd9d425dd296400abd70a19",
+    "court/2502.parquet": "5060e55ce8bcf7b3b00fa59744994d0821a584526070bf21f40e6e7ca6532292",
+    "court/2503.parquet": "26c21414b098c4a031f003cda4314448cb29a478d6a72b48a4751efb4a338bd7",
+    "court/2504.parquet": "f4282e5c6cf0d814ebb81d47d9cc39dac75b4a04405671cb432a0004da95f441",
+    "court/2505.parquet": "65439e72b259246bb312867dc9ff37c0cc4dd3832e974d1dc357fdde57242236",
+    "court/2506.parquet": "e917d55d152f34d6a991e4aedeb0341bec33e76d77431469ffb640c29ecbd9b2",
+    "court/2507.parquet": "84ce2eb2aa4fec4bbd6e62fa64a71c7838e14fcb89584173e5def42c1f1b98b1",
+    "court/2508.parquet": "4b9bb06c997cfd2090b30c2441623fb25b38406cb2c75944dd22cb5e05b6606c",
+    "court/2509.parquet": "1d53ed69f9ec54403f0b19f60d922a92a69fc5d5651a51f8efbeddfab8c762e5",
+    "court/2510.parquet": "cf8c0a11cbad47a57e56a7d91e572dea588b587b5d827ba23084d4d6bb16eb9a",
+    "court/2511.parquet": "b58bc76fe15a69bea38711a0a7c41f108e1d6bb271674b090c66a8c7a6c8a26e",
+    "court/2512.parquet": "0c9ce1ba6af0103dfd9cc5763025c605bc5723bf060246560ab600981f187cd0",
+    "court/2513.parquet": "4077997512401e9e7dc590b0169d58140536965e2a4266d9d335d243ecd61be5",
+    "court/2514.parquet": "da610020c3fbd535a453f248077fb181f8f98be8375397b004e6cd635ae84d4a",
+    "court/2515.parquet": "b72243604dd30657ddcba7d854b05444fb74b59e589fb318b96c8f517827f726",
+    "court/2516.parquet": "28df4c23bc0d8f77c2dd45379e2d3f1903e5914b01b35ee5952e1b2f13916337",
+    "court/2517.parquet": "479e14d6fa5cd15143a1f7dd16a5a9cde5e8711b0c3a193461339ae4d65b22b6",
+    "court/2518.parquet": "42501a327a568b327210488e936ba9a7fbe204d14b1459c325aef244d1216f0b",
+    "court/2519.parquet": "d08c0e919693dda42d51ab6d6e74f3b9d5167fe7a369b9f1a2092e72d11247f5",
+    "court/2520.parquet": "4866242d0720708cacc472c9d11a477ee893d697a04524a4539be6bdc13ac9d5",
+    "court/2521.parquet": "e1dc8d51fa28278a65f02d41de145d6f191a38625938cdf1f7282bc060151ff8",
+    "court/2522.parquet": "05f90babcaf7843e4dadd91366dd81751847d3b5e46cac4ee07ce408623d94f4",
+    "court/2523.parquet": "71659c233ef98f21440b5e9ae4f011fb498f8de557361598b43dacd502089d7d",
+    "court/2524.parquet": "0f98ba1c9556dec378a792140d4bdda583208ca57d49a74894f3a3ef6985bff4",
+    "court/2525.parquet": "99edae8b648f2fb63efeaeea4011170337fda9d273ca4b99d11c034473edd73c",
+    "court/2526.parquet": "892cea02be756eb94f6dbc53322b8dcd313fa027430cac0f79428231ea92a71f",
+    "court/2527.parquet": "02c45612f42c41669dd1b81dff052c961c1f03c4e977c4333a49fcf4ab51e250",
+    "court/2528.parquet": "0b482f903709c2aa11a1353250caf096d78e6d210b13d9fd7327500aa3199ea6",
+    "court/2529.parquet": "518bfa1121e8e06837f69b604745d727d7c132902b48c2f7791eda75f2be6ab5",
+    "court/2530.parquet": "141eb5f3c9570dd4efbecc3bc3dd0f56f922d60fc6d41d137feced7c8b637fae",
+    "court/2531.parquet": "456bb1e2e7ba2a630717df56a504a97577496d37e3b9dcf34a2821e2d14a91b1",
+    "court/2532.parquet": "c9c800910f65f828e387c3686e6e1a2d9fec1a45d8fcd1a59127df7591027d53",
+    "court/2533.parquet": "dabec56f761b9af1a2975a09451eaa54d48e1baa28863516072f7d05f1839bfe",
+    "court/2534.parquet": "298c71cbe949ab768ac8d4e7b779c24ae195023fb9e905fe9fddf4ffe14acfb9",
+    "court/2535.parquet": "cf3318f30a93b868b96425bad24b8ac26950063c79e508a6dcfdcb48ada4a908",
+    "court/2536.parquet": "463b6ba0b84d9249d4d8b5ba50c334fa86657720c3acba1489a10cf99f678e06",
+    "court/2537.parquet": "b53f7ae4c7736c994c0781cbffa4b5633623eba56c13ba5816856f6c65373675",
+    "court/2538.parquet": "054125810cf4146bf69ab16c642e702e2d28935e94874160cc173492a5c1067c",
+    "court/2539.parquet": "7e08d29a2eb79b6a9873fcf0b2a8f31c334263f712a3fd3648d762090142475f",
+    "court/2540.parquet": "de385b8d686d76c0f6568390d203d4785f3422f63922f3fc1e709c1d0bab9e81",
+    "court/2541.parquet": "6fb2250a33b7b19598c77a65ea04e2b9591854ab18a6a474d3a59be3e522325b",
+    "court/2542.parquet": "a54e96433ac2aecd5b0c78b0c0623daba6d7dbdbfe0b406eb571aa6c12505f4e",
+    "court/2543.parquet": "e4631d0d26b360cd6bd02b9aafa07857fdfbb5d6bd08cb68d6649094dc8f0b8b",
+    "court/2544.parquet": "f63b80d86bff377e639d312b1bde9ca86d1cafd2ab2f6f553f70609b1afad538",
+    "court/2545.parquet": "70f1b6e4770377f8c346fd448938cf280c5bf7afa8565aaf71efc91228ceb0d9",
+    "court/2546.parquet": "a83f5e2bc9b2dda230ecbd4c7c29f311f6a6ef34f0ce2636c9d502fb56302a6b",
+    "court/2547.parquet": "607a761f52a66f431b02582b00bffbbc45c9b51fb893bb08f0969eb90dfc073e",
+    "court/2548.parquet": "180d2d9d010954adf9efe1bcd0a0a823dd2ddf3b16a49dd1d941fdfc9c0dcffe",
+    "court/2549.parquet": "cee8131da99770304e02590169738a96449e51442b9a553e7900b2984cc67ef0",
+    "court/2550.parquet": "7b94e62ccb0556d7e39888a043e44ea905a32dc4b21a475bf39c9d39f92fdac4",
+    "court/2551.parquet": "242397acd1ef1138d3e2809019637a6b65a0262ef757ff32bd392691837b33cb",
+    "court/2552.parquet": "7a651a2d90666ebde4b9dbcae0d23cf666a6910110975d47d16906b99cc02409",
+    "court/2553.parquet": "f5cc4b9f99c257780c95b0465485088d7652a2b482ffe0702379ed907fd5512d",
+    "court/2554.parquet": "1729fbb1c000609e630e6315330cf739b836aacef73b2e09fbf61c65b5a34888",
+    "court/2555.parquet": "41c65ef3ed49dcd15e9b4f3ac9e4c68a691f3d2a677d2a0ba9b53ce09066f378",
+    "court/2556.parquet": "3fcbe7d81cf8c84ba60dfcc4d341cf9526fc92ebcb918fb4b41100a1ed298322",
+    "court/2557.parquet": "eeafd2bb6d7512d97576d220c37554f712223ccdd6a6701bbeb2e41a2efb040e",
+    "court/2558.parquet": "994ff469803f9d244c564f12b4578d3933cf425d845dffb3949e15e943315552",
+    "court/2559.parquet": "bfccc9b509a1a713839fbf597ee2b8d33db847019e96e76d3c5e7f250547d2ed",
+    "court/2560.parquet": "371c1657b81835528007b4ef63b2ac5e619222286d9be37ae84d39d7a375d271",
+    "court/2561.parquet": "3e1359dcbd6f31a84938c5cd94a2e05501ece96a91aadd7a4e2f7185c6a2d4cb",
+    "court/2562.parquet": "4691b085f866e0f692e5985f9f4583360fe87a60ecd58546e707ca54bb69bc50",
+    "court/2563.parquet": "25a2d0a6684756ca9ed61bfc3de7be496b3b5646d196b27e20fdf1fe308dd63f",
+    "court/2564.parquet": "57d87c927b46bed108e1c8507b8be037f0ffc2926a3cc31c491f94acc19584db",
+    "court/2565.parquet": "21d27df8571d965c41ff3ce0d68bd5e8c9476cb1d7c6daed9fe94643e373da32",
+    "court/2566.parquet": "be82ae1c5e8b2a343200b4f00a35bc27cfc5baa74db88dad8aa513362e6a0f42",
+    "court/2567.parquet": "59107220d479da52bab123a55a7e5b906c7a63c3235ca5ba2b8b66010e3b8c2d",
+    "court/2568.parquet": "e4b9ce4db2d7170b8a64a095ffeaba08d9e2ca73abda436a1ebfc7b19c53df6c",
+    "court/2569.parquet": "e2b8b521904fe83e89728581f4952852cd9ea8f8cd644fa878ecfbbb1979cabc",
+    "wongnai/review_dataset.zip": "45c3439a5f0a68f438ccfbf4403dd65af797f5ee9df5348a0ed4588cd8bea220",
+    "truevoice/mari-intent.zip": "9e6c2375675e31587924393dfffc250fe5e263c047ec2151c7082f4a9278cf94",
+    "wangchan/train.parquet": "3896e3307fc259bd1f2bad2283efb95c7031bac388c0fe18ab15c5691c275fbd",
     "thailaw/0.parquet": "e1f7c448cea6be2297f8ec3f6ddcfacdc8c13b441ef61e1ef8201a2f236ff9bc",
     "thailaw/1.parquet": "073e2d9571e2107fe7d17b94c5dcf565ea682c40d3f844c08bb2d7ccb85da303",
     "oasst2/ready.messages.jsonl.gz": "a9f240c4c77aa1378364f70d37e753c07ba284e247b019d700e1947a0e5da751",
@@ -1327,6 +1942,7 @@ PINS = {
     "yodas/00000049.txt": "202b83c8fbefef62ab536edc4235e36f9a34b0dfddd67b021404460cc8bb1374",
     "yodas/00000050.txt": "3c545faf681352c8f3ffd6656ef5f20308954351782811e77a4db3914793a0f1",
     "yodas/00000051.txt": "fd487477800edf94b2894dfb0b1beb3e4b5836c9ab7009ee95ca345ca6687bd1",
+    "commonvoice/th-sentence-collector.txt": "9fbd58d33edd6da3ccf631b21fe6d7a48b1d7c8bfab5b0acdfbac9f0ab7b01ab",
     "commonvoice/th-Wannaphong.txt": "32a2ea93e45d9a5c12e1a60aa21eef5b07f21b992e2d672417170dca720e5b5e",
     "commonvoice/th-thsentences.txt": "0f13e9bc804d07bf9848a36a201e834a41878e374371cf361098c69b0d272cf4",
     "mot/tha_voathai.tgz": "69c26f7e4e3d2ed33e193a4e41f021bd3ecfba21a89d1080fcb4960c66a1f4ef",
@@ -1408,4 +2024,5 @@ PINS = {
 if __name__ == "__main__":
     command = sys.argv[1:] or ["candidates", "near", "mix"]  # mix alone re-balances without reading the downloads again
     for step in command:
-        {"fetch": fetch, "candidates": candidates, "near": near, "mix": mix}[step]()
+        {"fetch": fetch, "candidates": candidates, "near": near, "mix": mix, "mix_tier1": lambda: mix((1,)),
+         "reduce": reduce, "reduce_tier1": lambda: reduce((1,))}[step]()

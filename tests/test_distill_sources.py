@@ -296,7 +296,7 @@ def test_parquet_formats(raw):
 
 def test_every_source_is_pinned_and_capped_sources_are_the_repetitive_ones():
     take = {s.name: s.take for s in d.SOURCES}
-    assert {n for n, t in take.items() if t} == {"soda", "tatoeba_en", "thailaw"}
+    assert {n for n, t in take.items() if t} == {"soda", "tatoeba_en"}
     assert take["soda"] == take["tatoeba_en"] == 100_000 and set(d.PINS) == set(d.downloads())
 
 
@@ -304,7 +304,7 @@ def test_mix_takes_each_sources_share_and_repeats_exactly(tmp_path, monkeypatch)
     big, small = d.Source("big", "Big", "news", "CC0 1.0", "", "", "", 3, None), d.Source("small", "Small", "chat", "MIT", "", "", "", 5, None)
     monkeypatch.setattr(d, "OUT", tmp_path)
     monkeypatch.setattr(d, "SOURCES", (big, small))
-    rows = [{"id": f"{s}-{i}", "text": f"text {s} {i}", "lang": lang, "source": s, "register": "r", "licence": "l", "pieces": 4}
+    rows = [{"id": f"{s}-{i}", "text": f"text {s} {i}", "lang": lang, "source": s, "register": "r", "licence": "l", "pieces": 4, "tier": 1}
             for s, n, lang in (("big", 10, "en"), ("small", 2, "th")) for i in range(n)]
     write(tmp_path / "candidates.jsonl", "".join(json.dumps(r) + "\n" for r in rows))
     write(tmp_path / "candidates.json", json.dumps({"files": {}, "sources": {"big": {"usable": 10}, "small": {"usable": 2}}}))
@@ -375,9 +375,9 @@ SPOKEN = d.Source("spoken", "Spoken", "spoken", "CC0 1.0", "", "", "", None, Non
 def test_caption_lines_are_joined_into_whole_utterances_and_cut_off_ones_thrown_away():
     captions = [(0, 100, "วันนี้เราจะมาทำ"), (100, 200, "แกงเขียวหวานกันนะครับ"), (200, 300, "เริ่มจากเตรียมเครื่องแกงก่อนครับ"),  # นะครับ is said mid-sentence
                 (300, 400, "[เสียงดนตรี]"), (400, 500, "ใส่กะทิลงไปแล้วก็"),  # cut off by the pause that follows
-                (900, 1000, "อร่อยมากเลย"),  # no polite particle: not kept
+                (900, 1000, "อร่อยมากเลย"),  # a looser closing word counts just before a pause
                 (2000, 2100, "- ไปไหนมา"), (2100, 2200, "ไปตลาดมาค่ะ")]
-    assert list(d.utterances(captions)) == [(0, "วันนี้เราจะมาทำ แกงเขียวหวานกันนะครับ เริ่มจากเตรียมเครื่องแกงก่อนครับ"), (6, "ไปไหนมา ไปตลาดมาค่ะ")]
+    assert list(d.utterances(captions)) == [(0, "วันนี้เราจะมาทำ แกงเขียวหวานกันนะครับ เริ่มจากเตรียมเครื่องแกงก่อนครับ"), (5, "อร่อยมากเลย"), (6, "ไปไหนมา ไปตลาดมาค่ะ")]
 
 
 def test_spoken_rows_lose_a_trailing_connective_and_keep_a_spoken_opening():
@@ -446,13 +446,6 @@ def test_templates_are_capped_and_customers_identities_dropped():
     assert sum(d.reject(lead, "en", stubs, f"id-{i}") is None for i in range(400)) in range(70, 130)  # one in four stays
 
 
-def test_videos_of_translated_subtitles_are_left_out(raw):
-    (raw / "yodas").mkdir()
-    lines = [f"AAAAAAAAAAA-{i:05}-{i * 100:08}-{i * 100 + 90:08} ตอนที่ {i} วันนี้อากาศดีมากเลยครับ" for i in range(5)]
-    lines += [f"BBBBBBBBBBB-{i:05}-{i * 100:08}-{i * 100 + 90:08} ไปกันเถอะทุกคน!" for i in range(5)]
-    write(raw / "yodas/0.txt", "\n".join(lines) + "\n")
-    assert {row_id[6:17] for row_id, _, _ in d.yodas()} == {"AAAAAAAAAAA"}
-
 
 def test_thai_wiki_text_keeps_no_fused_sentences_holes_list_items_or_marked_articles(raw):
     page = """{{กล่องข้อมูล|ชื่อ=ตัวอย่าง}}
@@ -506,10 +499,12 @@ def test_a_forward_only_source_marks_every_row_and_the_manifest(tmp_path, monkey
     assert {s.name for s in d.SOURCES if s.use} == {"marked"}
 
 
-def test_thai_wikipedia_is_forward_only_and_its_paragraphs_are_not_taken():
+def test_thai_wikipedia_is_forward_only_and_under_bar_thai_sources_are_candidates_with_their_scores():
     by_name = {s.name: s for s in d.SOURCES}
     assert by_name["thwiki"].use == "forward_only" and [s.name for s in d.SOURCES if s.use] == ["thwiki"]
-    assert by_name["thwiki_para"].take == by_name["yodas"].take == by_name["lotusdis"].take == by_name["iapp"].take == 0
+    candidates = {s.name for s in d.SOURCES if s.pool == "candidate"}
+    assert candidates == {"thwiki_para", "iapp", "yodas", "lotusdis", "commonvoice_th_collector", "opensubtitles_th", "wisesight"}
+    assert all(by_name[n].score and by_name[n].take is None for n in candidates)  # kept whole, with the score the reduction can weigh
 
 
 def test_tidy_pass_rules(raw):
@@ -557,3 +552,174 @@ def test_chat_context_is_the_message_just_before_in_the_same_conversation(raw):
     rows = list(d.byu())
     assert [r[3] for r in rows] == [None, rows[0][1], rows[1][1], None, rows[3][1]]  # never from another conversation, never skipping one
     assert [r[0] for r in rows] == ["byu-c1-0-0", "byu-c1-0-1", "byu-c1-1-0", "byu-c2-0-0", "byu-c2-1-0"]
+
+
+def test_every_row_carries_its_sources_tier_and_tier_2_can_be_left_out(tmp_path, monkeypatch):
+    clean = d.Source("clean", "C", "news", "CC0 1.0", "https://licence.example", "", "https://home.example", None, None)
+    unclear = d.Source("unclear", "U", "reviews", "LGPL-3.0", "https://lgpl.example", "", "", None, None, tier=2, finding="a software licence; the text is users'", read_on="https://read.example")
+    rows = []
+    for source in (clean, unclear):
+        rows += d.sift(source, [(f"{source.name}-1", f"This is one whole sentence from the {source.name} source.", "en")], lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), collections.Counter())
+    assert [r["tier"] for r in rows] == [1, 2]
+    monkeypatch.setattr(d, "OUT", tmp_path)
+    monkeypatch.setattr(d, "SOURCES", (clean, unclear))
+    write(tmp_path / "candidates.jsonl", "".join(json.dumps(r) + "\n" for r in rows))
+    write(tmp_path / "candidates.json", json.dumps({"files": {}, "sources": {"clean": {}, "unclear": {}}}))
+    d.mix()
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["by_tier"] == {"1": 1, "2": 1} and manifest["tiers_included"] == [1, 2]
+    assert manifest["sources"]["unclear"] == manifest["sources"]["unclear"] | {"tier": 2, "licence_finding": "a software licence; the text is users'", "licence_read_on": "https://read.example"}
+    assert manifest["sources"]["clean"] == manifest["sources"]["clean"] | {"tier": 1, "licence_finding": "CC0 1.0", "licence_read_on": "https://licence.example"}
+    d.mix(tiers=(1,))
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert [json.loads(line)["source"] for line in (tmp_path / "sources.jsonl").read_text().splitlines()] == ["clean"]
+    assert manifest["by_tier"] == {"1": 1} and manifest["sources"]["unclear"]["in_mix"] == 0 and manifest["tiers_included"] == [1]
+
+
+def test_new_thai_source_formats(raw):
+    pa = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+
+    def table(path, rows):
+        (raw / path).parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(pa.Table.from_pylist(rows), raw / path)
+
+    wrapped = "จำเลยให้การปฏิเสธว่าไม่เคยทำสัญญากู้\nและไม่เคยรับเงินจากโจทก์ (อันดับ 12 แผ่นที่ 3)\nจึงไม่ต้องรับผิดตามฟ้อง"  # typed with a break every few words
+    table("court/2540.parquet", [
+        {"docid": "1", "short_text": "ย่อของศาลเอง โจทก์ฟ้องขอให้บังคับจำเลยชำระหนี้ตามสัญญากู้ยืมเงิน", "source": "กองผู้ช่วยผู้พิพากษาศาลฎีกา", "litigants": "[{'role': 'โจทก์', 'name': 'นายสมชาติ ใจมั่น กับพวก'}]",
+         "long_text": wrapped},
+        {"docid": "2", "short_text": "ย่อของเนติบัณฑิตยสภา ไม่ใช่ของศาล", "long_text": "ศาลชั้นต้นพิจารณาแล้วเห็นว่าโจทก์มีอำนาจฟ้อง", "source": "เนติบัณฑิตยสภา", "litigants": "[]"},
+        {"docid": "3", "short_text": "", "source": "กองผู้ช่วยผู้พิพากษาศาลฎีกา", "litigants": "[{'role': 'โจทก์', 'name': 'นายสมชาติ ใจมั่น'}]",
+         "long_text": "พิพากษายืน\nนายวิชัย อ่อนถาวร เบิกความว่าเห็นเหตุการณ์\nพยานยืนยันว่าสมชาติเป็นผู้ลงลายมือชื่อในสัญญา " + "ซึ่งทำขึ้นที่สำนักงานของโจทก์ " * 6 + "\nที่ดินโฉนดเลขที่ 1234 เป็นของโจทก์\nเด็กหญิง ก. เป็นผู้เสียหาย"}])
+    counts = collections.Counter()
+    assert [(r[0], r[1]) for r in d.supreme_court(counts=counts)] == [("court-1-0", "ย่อของศาลเอง โจทก์ฟ้องขอให้บังคับจำเลยชำระหนี้ตามสัญญากู้ยืมเงิน"),
+                                                                    ("court-1-1", "จำเลยให้การปฏิเสธว่าไม่เคยทำสัญญากู้ และไม่เคยรับเงินจากโจทก์ จึงไม่ต้องรับผิดตามฟ้อง")]  # wrapped lines are one paragraph, without the docket reference
+    assert counts == {"kept": 2, "closing order": 1, "names a person": 3, "address, deed or company": 1, "Thai Bar record": 1}
+    law = "ประกาศกระทรวงตัวอย่าง\n\nข้อ ๑ ประกาศนี้ให้ใช้บังคับตั้งแต่วันถัดจากวันประกาศ\n\nข้อ ๒ ผู้ประกอบการต้องยื่นคำขอต่อนายทะเบียน\n\nประกาศ ณ วันที่ ๑ มกราคม พ.ศ. ๒๕๖๐\n\nรัฐมนตรีว่าการ\n\nมาตรา ๕ ไม่ใช่ข้อ"
+    table("thailaw/0.parquet", [{"title": "t", "text": law, "__index_level_0__": 3}])
+    assert list(d.thai_law("thailawc", d.CLAUSE)) == [("thailawc-3-2", "ผู้ประกอบการต้องยื่นคำขอต่อนายทะเบียน", "th")]  # stops at the signature block
+    table("wangchan/train.parquet", [{"ID": "F_1", "Instruction": "ทำไมธนาคารกลางจึงขึ้นอัตราดอกเบี้ย", "Input": "None", "License": "cc-by-sa-4.0"},
+                                     {"ID": "F_2", "Instruction": "สรุปบทความนี้ให้หน่อย", "Input": "บทความ", "License": "cc-by-sa-4.0"},
+                                     {"ID": "F_3", "Instruction": "คำถามจากแถวที่ห้ามใช้เชิงพาณิชย์", "Input": "None", "License": "cc-by-nc-4.0"}])
+    assert list(d.wangchan()) == [("wangchan-F_1", "ทำไมธนาคารกลางจึงขึ้นอัตราดอกเบี้ย", "th")]
+    for path, members in (("truevoice/mari-intent.zip", {"mari_train.csv": "texts,action\nอยากทราบว่าเหมาโทร 90 บาท 7 วัน รหัสอะไรคะ,enquire\nเค้าเช็ต . บาท เมื่อวานนี้,enquire\n", "mari_test.csv": "texts,action\n"}),
+                          ("wongnai/review_dataset.zip", {"w_review_train.csv": '"ร้านนี้อร่อยมากเลยค่ะ บริการก็ดีมาก\n- ต้มยำกุ้ง 120 บาท\nอาหารมาช้าไปหน่อยแต่รสชาติใช้ได้เลย ??";5\n', "test_file.csv": 'reviewID;review\n'})):
+        (raw / path).parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(raw / path, "w") as archive:
+            for name, text in members.items():
+                archive.writestr(name, text)
+    assert [r[1] for r in d.truevoice()] == ["อยากทราบว่าเหมาโทร 90 บาท 7 วัน รหัสอะไรคะ"]  # the row with a blanked number goes
+    assert [r[1] for r in d.wongnai()] == ["ร้านนี้อร่อยมากเลยค่ะ บริการก็ดีมาก"]  # the dish line and the line with lost emoji go
+
+
+def test_subtitles_keep_the_film_in_the_id_and_carry_the_line_before_when_it_is_close(raw, tmp_path, monkeypatch):
+    def line(n, start, end, text):
+        return f'<s id="{n}"><time id="T{n}S" value="{start}" />{text}<time id="T{n}E" value="{end}" /></s>'
+
+    film = "<document>" + line(1, "00:00:01,000", "00:00:03,000", "- วันนี้เราจะไปไหนกันดี") + line(2, "00:00:03,500", "00:00:05,000", "[เสียงดนตรี] ไปทะเลกันเถอะ")
+    film += line(3, "00:01:00,000", "00:01:02,000", "ผ่านไปหนึ่งนาทีแล้วนะ") + line(4, "00:01:02,500", "00:01:04,000", "Subtitles by somebody")
+    film += line(5, "00:02:00,000", "00:02:02,000", "ถ้าฝนไม่ตกนะ...") + line(6, "00:02:02,500", "00:02:04,000", "เราจะไปเดินเล่นกัน") + line(7, "00:02:30,000", "00:02:31,000", "ฮิสะคุง!")
+    film += line(8, "00:02:07,000", "00:02:08,000", "คุณแม่ คังโฮ") + line(9, "00:02:09,000", "00:02:10,000", "อะไร/กูเอาอักษรตัวแรกมา") + "</document>"
+    (raw / "opensubtitles").mkdir()
+    with zipfile.ZipFile(raw / "opensubtitles/th.zip", "w") as archive:
+        archive.writestr("OpenSubtitles/raw/th/1999/331581/4758707.xml", film)
+        archive.writestr("README", "not a subtitle file")
+    monkeypatch.setattr(d, "FILM_LINES", collections.defaultdict(lambda: [0, 0, 0]))
+    assert list(d.opensubtitles()) == [("opensubtitles-331581-4758707-1", "วันนี้เราจะไปไหนกันดี", "th", None), ("opensubtitles-331581-4758707-2", "ไปทะเลกันเถอะ", "th", "วันนี้เราจะไปไหนกันดี"),
+                                       ("opensubtitles-331581-4758707-3", "ผ่านไปหนึ่งนาทีแล้วนะ", "th", None),  # the tag, the dash and the credit go; a minute's gap ends the context
+                                       ("opensubtitles-331581-4758707-5", "ถ้าฝนไม่ตกนะ เราจะไปเดินเล่นกัน", "th", None)]  # a sentence split over two screens is one row
+    assert dict(d.FILM_LINES) == {"331581": [9, 1, 0]}  # the two lines that only call somebody and the two speakers on one line go
+    (raw / "wisesight").mkdir()
+    write(raw / "wisesight/pos.txt", "นิสสันบายพาส\nรถคันนี้ขับดีมากเลยครับ ประหยัดน้ำมันด้วย\n“พรรคหนึ่ง” ชวนติดแฮชแท็ก “อย่าเลื่อน” ด้าน “อีกคน” ชี้ว่าไม่เป็นไร\n")
+    assert [r[1].strip() for r in d.wisesight()] == ["รถคันนี้ขับดีมากเลยครับ ประหยัดน้ำมันด้วย"]  # the product name and the headline go
+    pooled = d.Source("pooled", "P", "reviews", "MIT", "", "", "", None, None, pool="candidate")
+    rows = d.sift(pooled, [("p-1", "This is one whole sentence from a source under the bar.", "en")], lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), collections.Counter())
+    assert rows[0]["pool"] == "candidate"
+    monkeypatch.setattr(d, "OUT", tmp_path)
+    monkeypatch.setattr(d, "SOURCES", (pooled, d.Source("opensubtitles_th", "O", "film", "Unstated", "", "", "", None, None, tier=2)))
+    rows += [{"id": "opensubtitles-331581-4758707-1", "text": "วันนี้เราจะไปไหนกันดี", "lang": "th", "source": "opensubtitles_th", "register": "film", "licence": "Unstated", "tier": 2, "pieces": 6}]
+    write(tmp_path / "candidates.jsonl", "".join(json.dumps(r) + "\n" for r in rows))
+    write(tmp_path / "candidates.json", json.dumps({"files": {}, "sources": {"pooled": {}, "opensubtitles_th": {}}}))
+    write(tmp_path / "films_read.json", json.dumps({"films": {"331581": [4, 1, 0], "999": [8, 0, 2]}, "files": {"331581/4758707": [4, 2, 0], "999/1": [8, 0, 4]}, "reader": {"lyric lines": 3}}))
+    d.mix()
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["by_pool"] == {"candidate": 1, "passed": 1} and manifest["films"] == {"file": "films.json", "films": 2, "with_rows": 1, "subtitle_files": 2, "reader": {"lyric lines": 3}}
+    assert json.loads((tmp_path / "films.json").read_text()) == {"331581": {"read": 4, "in_mix": 1, "dropped_share": 0.5, "joined_share": 0.25, "mixed_register_lines": 0,
+                                                                            "files": {"4758707": {"thai_lines": 4, "particle_rate": 0.5, "possessive_rate": 0.0}}},
+                                                                 "999": {"read": 8, "in_mix": 0, "dropped_share": 1.0, "joined_share": 0.0, "mixed_register_lines": 2,
+                                                                         "files": {"1": {"thai_lines": 8, "particle_rate": 0.0, "possessive_rate": 0.5}}}}
+
+
+def test_subtitles_are_repaired_and_never_joined_across_speakers_or_songs(raw, monkeypatch):
+    def film(*lines):  # each line shows for a second, half a second after the one before
+        return "<document>" + "".join(f'<s id="{n}"><time value="00:00:{n * 2:02},000" />{text}<time value="00:00:{n * 2 + 1:02},500" /></s>' for n, text in enumerate(lines, 1)) + "</document>"
+
+    spoken = film("♪ เพลงรักของเราสองคน", "ยังดังอยู่ในใจฉันเสมอ", "ตลอดไปไม่มีวันจาง ♪",  # a song: its first line, its last, and the one between
+                  "คุณจะไปตลาดกับฉันไหมคะ", "แล้วผมจะรออยู่ที่บ้านครับ",  # a finished question, and a man answering a woman: two rows
+                  "เมื่อวานฉันเห็นเขาที่ร้านกาแฟ,", "- แล้วเขาพูดอะไรกับเธอบ้าง",  # the dash marks another speaker
+                  "ไซโต้ เคียวอิจิ", "ฉันอยากบอกเธอว่า...", "- วันนี้อากาศดีมากเลย")  # a half sentence and a bare name go, and are nobody's context
+    (raw / "opensubtitles").mkdir()
+    with zipfile.ZipFile(raw / "opensubtitles/th.zip", "w") as archive:
+        archive.writestr("OpenSubtitles/raw/th/2001/1/1.xml", spoken)
+        archive.writestr("OpenSubtitles/raw/th/2001/2/2.xml", film(*["วันนี้เราจะไปไหนกันดี".encode("utf8").decode("cp874", "replace").replace("\ufffd", "\x81")] * 3))  # ponytail: one undefined byte stands in for all
+        archive.writestr("OpenSubtitles/raw/th/2001/3/3.xml", film(*["เธเธฃเธฑเธเธขเน"] * 3))  # scrambled past repair
+    for name in ("FILM_LINES", "FILE_SIGNS", "SUBTITLE_DROPS"):
+        monkeypatch.setattr(d, name, type(getattr(d, name))(getattr(d, name).default_factory) if name == "FILM_LINES" else type(getattr(d, name))())
+    rows = list(d.opensubtitles())
+    assert [(r[1], r[3]) for r in rows if "-1-1-" in r[0]] == [("คุณจะไปตลาดกับฉันไหมคะ", None), ("แล้วผมจะรออยู่ที่บ้านครับ", "คุณจะไปตลาดกับฉันไหมคะ"),
+                                                              ("เมื่อวานฉันเห็นเขาที่ร้านกาแฟ,", "แล้วผมจะรออยู่ที่บ้านครับ"), ("แล้วเขาพูดอะไรกับเธอบ้าง", "เมื่อวานฉันเห็นเขาที่ร้านกาแฟ,"),
+                                                              ("วันนี้อากาศดีมากเลย", None)]
+    assert d.SUBTITLE_DROPS == {"lyric lines": 3, "joins refused at a change of speaker": 2, "half sentences": 1, "bare names and noun phrases": 1,
+                                "files in the wrong encoding, read properly": 1, "files in the wrong encoding, left out": 1}
+    assert d.FILE_SIGNS["1/1"] == [10, 3, 1] and "3/3" not in d.FILE_SIGNS  # ten Thai lines, three with a particle of speech, one possessive
+
+
+def test_tier_2_sources_come_after_every_tier_1_source_that_is_taken():
+    order = [(s.tier, s.pool == "candidate") for s in d.SOURCES]
+    assert order == sorted(order)  # so no row is dropped as the duplicate of a tier 2 or candidate row that may later be removed
+
+
+def test_reduction_keeps_one_of_each_look_alike_and_drops_what_should_not_be_translated(tmp_path, monkeypatch):
+    passed = d.Source("passed", "P", "news", "CC0 1.0", "", "", "", None, None)
+    unclear = d.Source("opensubtitles_th", "O", "film", "Unstated", "", "", "", None, None, tier=2, pool="candidate")
+    held = d.Source("held", "H", "captions", "CC0 1.0", "", "", "", None, None, pool="candidate")
+    monkeypatch.setattr(d, "OUT", tmp_path)
+    monkeypatch.setattr(d, "SOURCES", (passed, held, unclear))
+
+    def row(source, n, text, lang="th", **more):
+        return {"id": f"{source.name}-{n}-0-{n}" if source is unclear else f"{source.name}-{n}", "text": text, "lang": lang, "source": source.name, "register": source.register,
+                "licence": source.licence} | more | {"tier": source.tier}
+
+    rows = [row(passed, 1, "วันนี้อากาศดีมากเลยนะครับ"),  # kept: tier 1 beats the tier 2 look-alike below
+            row(passed, 2, "The meeting starts at 10 o'clock in room 12.", "en"),
+            row(passed, 3, "The meeting starts at 11 o'clock in Room 34!", "en"),  # the same but for digits, case and punctuation
+            row(passed, 4, "<i>เราไปกินข้าวด้วยกันไหม</i>"), row(passed, 5, "ตลกมาก 55555555 จริงๆ เลยนะเนี่ย"), row(passed, 6, "ใช่ค่ะ"),  # markup, repeated characters, too short
+            row(held, 1, "แถวนี้มาจากแหล่งที่ยังไม่ผ่านเกณฑ์คุณภาพ"),
+            row(unclear, 1, "วันนี้อากาศดีมากเลยครับ"),  # a look-alike of the first row, in the same politeness
+            row(unclear, 2, "วันนี้อากาศดีมากเลยค่ะ"), row(unclear, 3, "วันนี้อากาศดีมาก"),  # the other two politenesses stay
+            row(unclear, 4, "เราไปกินข้าวด้วยกันไหม"), row(unclear, 5, "เราไปกินข้าวด้วยกันไหม", context="หิวหรือยัง"),  # the one with context is kept
+            row(unclear, 6, "ใช่ค่ะ", context="คุณมาจากกรุงเทพหรือ"), row(unclear, 7, "ใช่ครับ", context="พร้อมหรือยัง"),  # short replies stay with their context
+            row(unclear, 999, "แถวนี้มาจากหนังที่คำบรรยายเสียเกือบทั้งเรื่อง"), row(unclear, 8, "ฉันขอให้เรือเดินสมุทรที่บันทึกไว้ทั้งหมดของคุณ")]
+    write(tmp_path / "sources.jsonl", "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    write(tmp_path / "manifest.json", json.dumps({"rows": len(rows), "sha256": "x", "sources": {"passed": {"in_mix": 6}, "held": {"in_mix": 1}, "opensubtitles_th": {"in_mix": 9}}}))
+    write(tmp_path / "films.json", json.dumps({"999": {"read": 100, "in_mix": 1, "dropped_share": 0.9, "joined_share": 0, "mixed_register_lines": 0},
+                                               "1": {"read": 100, "in_mix": 60, "dropped_share": 0.3, "joined_share": 0.1, "mixed_register_lines": 0,
+                                                     "files": {"0": {"thai_lines": 90, "particle_rate": 0.34, "possessive_rate": 0.03}}},
+                                               "8": {"read": 100, "in_mix": 60, "dropped_share": 0.3, "joined_share": 0.1, "mixed_register_lines": 0,  # no particles of speech, every possessive kept
+                                                     "files": {"0": {"thai_lines": 90, "particle_rate": 0.1, "possessive_rate": 0.09}}}}))
+    monkeypatch.setattr(d, "SHORT_KEEP", 1)
+    d.reduce()
+    first = (tmp_path / "distill_set.jsonl").read_bytes()
+    kept = [json.loads(line)["id"] for line in first.decode().splitlines()]
+    assert kept == ["passed-1", "passed-2", "opensubtitles_th-2-0-2", "opensubtitles_th-3-0-3", "opensubtitles_th-5-0-5", "opensubtitles_th-6-0-6"]
+    record = json.loads((tmp_path / "distill_set.json").read_text())
+    assert {rule: counts["all"] for rule, counts in record["removed"].items() if counts["all"]} == {
+        "candidate source not admitted": 1, "film in the worst band": 1, "machine-translated subtitle file": 1, "leftover markup": 1, "repeated characters": 1, "too short": 1,
+        "short reply over the cap": 1, "look-alike duplicate": 3}
+    assert record["rows"] == 6 and record["sources"]["opensubtitles_th"] == {"pool": 9, "kept": 4} and record["subtitle_files_left_out_as_machine_translated"] == 1 and record["look_alikes"]["kept_as_politeness_variants"] == 2
+    assert record["look_alikes"]["groups"] == 3 and record["films_left_out"] == 1 and record["pool"]["rows"] == len(rows)
+    assert (tmp_path / "sources.jsonl").read_text().count("\n") == len(rows)  # the pool is not touched
+    d.reduce()
+    assert (tmp_path / "distill_set.jsonl").read_bytes() == first  # the same again
+    d.reduce(tiers=(1,))
+    assert [json.loads(line)["id"] for line in (tmp_path / "distill_set.jsonl").read_text().splitlines()] == ["passed-1", "passed-2"]

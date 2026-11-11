@@ -9,8 +9,9 @@ covered here. It is not deterministic and is recorded separately.
 
 ## 1. What the set is
 
-`data/distill/sources.jsonl` holds 4,102,205 rows: 3,701,301 English and
-400,904 Thai. Each row is one chat utterance, or one or more whole sentences of prose:
+`data/distill/sources.jsonl` holds 9,065,701 rows: 3,701,301 English and
+5,364,400 Thai. It is a pool, not yet the set that will be translated: the owner will reduce it to a
+high-quality set in one later pass. Each row is one chat utterance, or one or more whole sentences of prose:
 
 ```json
 {"id": "sgd-train001-12-3", "text": "I need the car on March 8th.", "lang": "en", "source": "sgd", "register": "task dialogue", "licence": "CC BY-SA 4.0", "context": "What day would you like to pick it up?"}
@@ -18,12 +19,24 @@ covered here. It is not deterministic and is recorded separately.
 
 - `context` is what stands just before the row: on dialogue rows the turn before in the same conversation,
   on Thai prose rows the sentence before in the same article. It is there so the translator knows what is
-  being answered, or who an unstated subject is. Only `text` is to be translated. 773,203 rows carry one.
+  being answered, or who an unstated subject is. Only `text` is to be translated. 4,234,128 rows carry one.
 - `repairs`, when present, lists what was changed in the text: a leading connective removed, a label or
   option marker removed, a bracket of Chinese, Japanese or Korean removed, a doubled Thai sara e corrected, a trailing connective
   removed from a spoken row.
+- `tier` is the row's licence tier, set on its source. **1**: a clear licence allowing commercial reuse and
+  redistribution, from whoever owns the text. **2**: text that is publicly downloadable where the licence is
+  unclear: none is stated, or it covers only the packaging while the text is third parties', or it is an
+  odd but permissive one. Tier 2 is allowed for Thai sources only, and never where a term speaks against the
+  use (non-commercial, no-derivatives, no scraping or model training, an access agreement). 4,961,503 rows are
+  tier 2. They can be left out in one step: see section 7. The manifest counts rows `by_tier` and records,
+  for each source, its tier, what the licence check found and the page it was read on.
+- `pool`, when present, is `"candidate"`: the row's source scored under the quality bar of section 5 on a
+  sample, by this build's reviewers or by an independent review. Its rows are kept and marked, so the later
+  reduction can decide. 4,928,852 rows carry it, from seven Thai sources: OpenSubtitles, Thai Wikipedia's
+  whole paragraphs, the Common Voice collector file, YODAS, wisesight, the iApp questions and LOTUSDIS. The
+  manifest gives each source's latest scores as `last_score`. Only structural junk is dropped at this stage.
 - `use`, when present, is `"forward_only"`: the pair made from this row may be trained on only as written,
-  the row's text as source and its translation as target, and never reversed. All 271,769 Thai Wikipedia
+  the row's text as source and its translation as target, and never reversed. All 271,515 Thai Wikipedia
   rows carry it, and no others. A row without the field may be used in both directions. The manifest gives
   the count under `by_use` and each source's setting.
 - `id` holds the source's own id and the row's position in it.
@@ -32,43 +45,61 @@ covered here. It is not deterministic and is recorded separately.
 filter, licence and attribution line, and every input file's address, sha256, size and whether it can
 be fetched again.
 
-Lengths, measured with the project's tokenizer: 92.4 characters on average
-(201 at the 95th percentile) and 26.1 tokenizer pieces
-(57 at the 95th percentile). English averages 86.1 characters, Thai 150.2.
+Lengths, measured with the project's tokenizer: 63.1 characters on average
+(172 at the 95th percentile) and 17.3 tokenizer pieces
+(50 at the 95th percentile). English averages 86.1 characters, Thai 47.6:
+subtitle lines are short.
+
+`data/distill/films.json` gives, for each film in OpenSubtitles: the subtitle lines read, the rows in the
+set, the share of lines dropped, the share joined to the line before, and the number of lines that mix rude
+and polite pronouns or say "ผมนั้น", "ฉันนั้น" (a cheap sign of machine translation). Nothing acts on these yet.
 
 Everything is built by one module, `train/distill_sources.py`. Its tests are in `tests/test_distill_sources.py`.
 
 ## 2. Sources
 
 Every source's licence was read on its own page (the repository's licence file, the dataset card, or the
-site itself) on 10 or 11 November 2026. A source is used only if that licence allows commercial reuse and
-redistribution, and can be combined into a CC BY-SA 4.0 release.
+site itself) on 10 or 11 November 2026. A tier 1 source is used only if that licence allows commercial
+reuse and redistribution, and can be combined into a CC BY-SA 4.0 release. Tier 2 sources (see `tier` in
+section 1) do not meet that test and would have to be left out of such a release, or cleared first.
 
-| Source | Dataset | Language | Register | Licence | Rows | Attribution |
-|---|---|---|---|---|---:|---|
-| `byu_chitchat` | BYU Chit-Chat Dataset | English | informal chat | [MIT](https://opensource.org/license/mit) | 183,594 | Copyright (c) 2019 Perception, Control and Cognition Lab, Brigham Young University |
-| `abcd` | Action-Based Conversations Dataset | English | customer-service chat | [MIT](https://opensource.org/license/mit) | 19,848 | Copyright (c) 2021 ASAPP Research |
-| `multiwoz` | MultiWOZ 2.2 | English | task dialogue | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 42,223 | Budzianowski and others 2018; Zang and others 2020. Also offered under MIT in the GitHub repository |
-| `taskmaster2` | Taskmaster-2 | English | spoken task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 48,481 | Byrne, Krishnamoorthi, Ganesh, Dubey, Kim and Cedilnik, Google LLC |
-| `taskmaster3` | Taskmaster-3 | English | task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 80,715 | Byrne, Krishnamoorthi and Ganesh, Google LLC |
-| `sgd` | Schema-Guided Dialogue | English | task dialogue | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 114,690 | Rastogi, Zang, Sunkara, Gupta and Khaitan, Google LLC |
-| `dolly` | databricks-dolly-15k | English | questions and answers | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) | 5,630 | Databricks, Inc. |
-| `oasst2_th` | OpenAssistant Conversations (OASST2), Thai | Thai | questions typed to an assistant | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 576 | OpenAssistant contributors, LAION |
-| `commonvoice_th` | Common Voice sentences, Thai | Thai | everyday sentences | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 147 | None required |
-| `tatoeba_th` | Tatoeba, Thai | Thai | everyday sentences | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) | 1,935 | Tatoeba contributors, each row's id holds the sentence number, https://tatoeba.org/sentences/show/`<number>` |
-| `tatoeba_en` | Tatoeba, English | English | everyday sentences | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) | 100,000 | Tatoeba contributors, each row's id holds the sentence number, https://tatoeba.org/sentences/show/`<number>` |
-| `soda` | SODA | English | social chat, written by a language model | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 100,000 | Kim and others, Allen Institute for AI, 2023 |
-| `globalvoices` | Global Voices, English (OPUS GlobalVoices 2018Q4) | English | news features | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) | 227,979 | Global Voices authors, each row's id holds the article's date and address, https://globalvoices.org/`<yyyy>`/`<mm>`/`<dd>`/`<address>`/ |
-| `enwikinews` | English Wikinews | English | news | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 217,015 | Wikinews contributors, each row's id holds the page id, https://en.wikinews.org/?curid=`<page id>` |
-| `enwikivoyage` | English Wikivoyage | English | travel | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 479,071 | Wikivoyage contributors, each row's id holds the page id, https://en.wikivoyage.org/?curid=`<page id>` |
-| `blognone` | Blognone posts, January 2020 to April 2023 | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 37,475 | Blognone and the post's author. Each row's id holds the post's row number in Noxturnix/blognone-20230430, which gives its author, title and date |
-| `blognone_para` | Blognone posts, whole paragraphs | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 9,609 | As for blognone |
-| `voathai` | Voice of America Thai, articles (Multilingual Open Text 1.11) | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 59,587 | Voice of America, each row's id holds the article number, https://www.voathai.com/a/`<number>`.html. Collected by Palen-Michel, Kim and Lignos, Multilingual Open Text, whose collection is CC BY 4.0 |
-| `voathai_para` | Voice of America Thai, whole paragraphs | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 13,643 | As for voathai |
-| `thailaw` | Thai Law Dataset v1.0, sections of Acts and decrees | Thai | legal | [Public domain (Thai Copyright Act, section 7)](https://creativecommons.org/publicdomain/zero/1.0/) | 6,163 | Collected by PyThaiNLP (Wannaphong Phatthiyaphaibun), released CC0. Each row's id holds the document's number in the dataset |
-| `thwiki` | Thai Wikipedia | Thai | encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 271,769 | Wikipedia contributors, each row's id holds the page id, https://th.wikipedia.org/?curid=`<page id>` |
-| `simplewiki` | Simple English Wikipedia | English | plain-language encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1,124,166 | Wikipedia contributors, each row's id holds the page id, https://simple.wikipedia.org/?curid=`<page id>` |
-| `commonvoice_wiki` | Common Voice sentences taken from English Wikipedia | English | encyclopaedic | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 957,867 | None required |
+| Source | Dataset | Language | Register | Licence | Tier | Pool | Rows | Attribution |
+|---|---|---|---|---|---:|---|---:|---|
+| `byu_chitchat` | BYU Chit-Chat Dataset | English | informal chat | [MIT](https://opensource.org/license/mit) | 1 | passed | 183,594 | Copyright (c) 2019 Perception, Control and Cognition Lab, Brigham Young University |
+| `abcd` | Action-Based Conversations Dataset | English | customer-service chat | [MIT](https://opensource.org/license/mit) | 1 | passed | 19,857 | Copyright (c) 2021 ASAPP Research |
+| `multiwoz` | MultiWOZ 2.2 | English | task dialogue | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 1 | passed | 42,224 | Budzianowski and others 2018; Zang and others 2020. Also offered under MIT in the GitHub repository |
+| `taskmaster2` | Taskmaster-2 | English | spoken task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 1 | passed | 48,484 | Byrne, Krishnamoorthi, Ganesh, Dubey, Kim and Cedilnik, Google LLC |
+| `taskmaster3` | Taskmaster-3 | English | task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 1 | passed | 80,720 | Byrne, Krishnamoorthi and Ganesh, Google LLC |
+| `sgd` | Schema-Guided Dialogue | English | task dialogue | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | passed | 114,693 | Rastogi, Zang, Sunkara, Gupta and Khaitan, Google LLC |
+| `dolly` | databricks-dolly-15k | English | questions and answers | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) | 1 | passed | 5,630 | Databricks, Inc. |
+| `oasst2_th` | OpenAssistant Conversations (OASST2), Thai | Thai | questions typed to an assistant | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 1 | passed | 577 | OpenAssistant contributors, LAION |
+| `commonvoice_th` | Common Voice sentences, Thai | Thai | everyday sentences | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | passed | 147 | None required |
+| `wangchan` | WangchanThaiInstruct, instructions of the CC BY-SA rows | Thai | questions typed to an assistant | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | passed | 1,470 | VISTEC and AIResearch.in.th. Each row's id holds the dataset's own ID |
+| `tatoeba_th` | Tatoeba, Thai | Thai | everyday sentences | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) | 1 | passed | 1,935 | Tatoeba contributors, each row's id holds the sentence number, https://tatoeba.org/sentences/show/`<number>` |
+| `tatoeba_en` | Tatoeba, English | English | everyday sentences | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) | 1 | passed | 100,000 | Tatoeba contributors, each row's id holds the sentence number, https://tatoeba.org/sentences/show/`<number>` |
+| `soda` | SODA | English | social chat, written by a language model | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 1 | passed | 100,000 | Kim and others, Allen Institute for AI, 2023 |
+| `globalvoices` | Global Voices, English (OPUS GlobalVoices 2018Q4) | English | news features | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) | 1 | passed | 227,979 | Global Voices authors, each row's id holds the article's date and address, https://globalvoices.org/`<yyyy>`/`<mm>`/`<dd>`/`<address>`/ |
+| `enwikinews` | English Wikinews | English | news | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 1 | passed | 217,015 | Wikinews contributors, each row's id holds the page id, https://en.wikinews.org/?curid=`<page id>` |
+| `enwikivoyage` | English Wikivoyage | English | travel | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | passed | 479,071 | Wikivoyage contributors, each row's id holds the page id, https://en.wikivoyage.org/?curid=`<page id>` |
+| `blognone` | Blognone posts, January 2020 to April 2023 | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 1 | passed | 37,461 | Blognone and the post's author. Each row's id holds the post's row number in Noxturnix/blognone-20230430, which gives its author, title and date |
+| `blognone_para` | Blognone posts, whole paragraphs | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 1 | passed | 9,610 | As for blognone |
+| `voathai` | Voice of America Thai, articles (Multilingual Open Text 1.11) | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 1 | passed | 59,553 | Voice of America, each row's id holds the article number, https://www.voathai.com/a/`<number>`.html. Collected by Palen-Michel, Kim and Lignos, Multilingual Open Text, whose collection is CC BY 4.0 |
+| `voathai_para` | Voice of America Thai, whole paragraphs | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 1 | passed | 13,641 | As for voathai |
+| `thailaw` | Thai Law Dataset v1.0, sections of Acts and decrees | Thai | legal | [Public domain (Thai Copyright Act, section 7)](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | passed | 6,155 | Collected by PyThaiNLP (Wannaphong Phatthiyaphaibun), released CC0. Each row's id holds the document's number in the dataset |
+| `thailaw_clauses` | Thai Law Dataset v1.0, clauses of announcements and regulations | Thai | legal | [Public domain (Thai Copyright Act, section 7)](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | passed | 22,501 | As for thailaw |
+| `court` | Thai Supreme Court judgments (deka-bulk) | Thai | legal | [Public domain (Thai Copyright Act, section 7)](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | passed | 77,075 | Supreme Court of Thailand, collected by Korakot Chaovavanich. Each row's id holds the judgment's docid |
+| `thwiki` | Thai Wikipedia | Thai | encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | passed | 271,515 | Wikipedia contributors, each row's id holds the page id, https://th.wikipedia.org/?curid=`<page id>` |
+| `simplewiki` | Simple English Wikipedia | English | plain-language encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | passed | 1,124,167 | Wikipedia contributors, each row's id holds the page id, https://simple.wikipedia.org/?curid=`<page id>` |
+| `commonvoice_wiki` | Common Voice sentences taken from English Wikipedia | English | encyclopaedic | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | passed | 957,867 | None required |
+| `iapp` | iApp Wiki QA, questions | Thai | questions and answers | [MIT](https://opensource.org/license/mit) | 1 | candidate | 5,367 | Copyright (c) 2021 iApp Technology Co., Ltd. |
+| `lotusdis` | LOTUSDIS | Thai | spoken conversation | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | candidate | 1,436 | NECTEC, National Science and Technology Development Agency, Thailand |
+| `commonvoice_th_collector` | Common Voice sentences, Thai, sentence collector file | Thai | everyday sentences | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | candidate | 18,962 | None required |
+| `thwiki_para` | Thai Wikipedia, whole paragraphs | Thai | encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | candidate | 42,914 | As for thwiki |
+| `truevoice` | TrueVoice intent, customer utterances | Thai | call-centre requests | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 2 | passed | 8,977 | TrueVoice, published by Kobkrit Viriyayudhakorn |
+| `wongnai` | Wongnai review corpus, review lines | Thai | restaurant reviews | [LGPL-3.0](https://www.gnu.org/licenses/lgpl-3.0.html) | 2 | passed | 92,353 | Wongnai and the reviews' authors. Each row's id holds the file and the review's row number |
+| `yodas` | YODAS, Thai uploader-supplied captions (th000) | Thai | spoken, video captions | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) | 2 | candidate | 15,693 | The uploader of each video. Each row's id holds the video id, https://www.youtube.com/watch?v=`<id>`. Collected by Li and others, YODAS, 2023 |
+| `opensubtitles_th` | OpenSubtitles Thai (OPUS OpenSubtitles v2018) | Thai | film and television dialogue | [Unstated](https://opus.nlpl.eu/legacy/OpenSubtitles-v2018.php) | 2 | candidate | 4,667,199 | OpenSubtitles, http://www.opensubtitles.org/, and the subtitles' volunteer translators. Each row's id holds the film's IMDb number and the subtitle file's number. Collected by Lison and Tiedemann, OPUS |
+| `wisesight` | Wisesight Sentiment Corpus | Thai | social media posts | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 2 | candidate | 9,859 | Wisesight (Thailand) Co., Ltd. and the posts' authors |
 
 Notes:
 
@@ -89,6 +120,23 @@ Notes:
 - **Global Voices** is used without author names, which its archive does not carry.
 - **Thai law.** Thai statutes and official orders are not subject to copyright (Copyright Act B.E. 2537,
   section 7). The collection is released as CC0 by PyThaiNLP.
+- **Supreme Court judgments.** Judgments are not copyright works (section 7(4)). These are real people's
+  cases, so any paragraph that names a private person is left out: a title or rank followed by a name, the
+  name of one of the record's own litigants, a child even by initial, or a paragraph that opens with a
+  person's initial. So is one with a house address, a land deed's number or a company named as a party. A record whose headnote the Thai Bar wrote is left out whole.
+  Judgments from before B.E. 2500 are not read: they are in older spelling.
+- **OpenSubtitles Thai (tier 2).** No licence is stated. OPUS, which distributes the collection, asks only
+  "Please, add a link to http://www.opensubtitles.org/". The site's robots.txt carries
+  "Content-Signal: search=yes,ai-train=no" (read 11 November 2026). The subtitles are volunteers' translations
+  of films and programmes. The owner decided to take it as tier 2, removable in one step.
+- **Wongnai (tier 2).** The corpus is published by Wongnai itself under LGPL-3.0, a software licence. The
+  reviews were written by its users. Wongnai's terms of service forbid users to collect reviews for any
+  purpose "เว้นแต่จะได้รับอนุญาตจากทางบริษัท" (unless the company permits); this corpus is the company's own release.
+- **wisesight (tier 2).** The compiler waived all rights (CC0 1.0); the posts are third parties'.
+- **TrueVoice (tier 2).** Apache-2.0, stated in an individual's repository. TrueVoice's own grant was not
+  found, and the speakers are its customers.
+- **WangchanThaiInstruct.** Each row has its own licence. Only the 5,014 CC BY-SA 4.0 rows are read; the
+  other 34,986 are CC BY-NC 4.0 and are not.
 - **OASST2.** Only what people typed to the assistant is taken, not the assistant's replies.
 - **Common Voice** sentence text comes from the project's GitHub repository, where it is released as CC0.
 - **Tatoeba.** Sentences their authors released as CC0 are left out: as a set they did not pass the quality check.
@@ -96,18 +144,13 @@ Notes:
 - **Benchmarks** (FLORES-200 and WMT24++ English-Thai) are downloaded only to exclude their sentences.
   FLORES+ is access-controlled and was not used: FLORES-200 holds the same sentences before later corrections.
 
-Sources that were built and then left out because too few of their rows passed the quality check: the iApp
-questions (Thai questions about Wikipedia articles: too many have no subject or have article text spliced on), YODAS
-(captions that uploaders typed for Creative Commons videos), LOTUSDIS (spoken Thai conversation) and Thai
-Wikipedia's whole paragraphs, all four still built and counted but with a take of 0; the large Common Voice Thai collector file (about a third of
-it is machine translation from English, and it could not be separated); Common Voice English collector
-sentences, Thai and English Wikibooks, OASST2 English, Aya, WangchanThaiInstruct, and the Tatoeba CC0 sentences.
+Sources that were built and then left out because too few of their rows passed the quality check: Common
+Voice English collector sentences, Thai and English Wikibooks, OASST2 English, Aya, the answers and input-bound
+instructions of WangchanThaiInstruct, and the Tatoeba CC0 sentences. Thai sources that fell under the bar are
+no longer left out: they are the candidate pool (`pool` in section 1).
 
 Sources that were examined and not built:
 
-- **Wongnai review corpus** (LGPL-3.0). The LGPL is written for software. Applied to text it would at least
-  require any set that includes the reviews to be offered under the LGPL or GPL, which cannot be combined
-  with a CC BY-SA 4.0 release. The reviews were also written by the site's users, not by the publisher.
 - **Thai Local Language Translation Dataset** (CC BY-SA 4.0). Its Central Thai side is a few sentence
   templates about selling goods with the product, unit and price swapped, and carries dialect spellings.
 - **Thai Wikinews.** Under 250 usable rows, many of them headlines.
@@ -163,7 +206,53 @@ Sources that were examined and not built:
   and lines under twelve words. So are captions and credits ("Photo by", "used under", "CC BY", "Original
   post", a line ending in an abbreviated month), lines with a link's language tag such as (RUS), and lines
   opening "In it", "They are" or "Check out".
-- **Questions typed to an assistant (OASST2 Thai).** Each one-line message is a row, whole.
+- **Questions typed to an assistant (OASST2 Thai, WangchanThaiInstruct).** Each one-line message is a row,
+  whole. From WangchanThaiInstruct only instructions with no input passage are taken, and not those that ask
+  about a case, article or study that is not in the row or that open with a writing-task template.
+- **Thai law, clauses.** As for sections of Acts, but the clauses ("ข้อ 5") of announcements, regulations and
+  orders, which stop at the signature block. A clause that still holds a signature line, or that has none
+  of the words a provision is made with (ให้, ต้อง, ห้าม, อาจ, จะ and the like), is skipped.
+- **Supreme Court judgments.** Each paragraph is cut like other Thai prose, with the sentence before it in
+  the same judgment as context. Some records are typed with a line break every hundred characters or so:
+  their lines are joined into one paragraph first. Docket references "(อันดับ ...)" are removed. Closing orders ("พิพากษายืน", "ยกฟ้อง ...") and paragraphs typed with a space
+  between every word are skipped.
+- **Subtitles (OpenSubtitles).** One subtitle sentence a row, from the files that keep each film apart and
+  each line's times. The row id holds the film's IMDb number, the subtitle file's number and the line's
+  number. A file whose Thai was stored in one encoding and read in another (every letter turned into "เธ" or
+  "เน" and one more) is read properly again, or left out if that fails: 33 files repaired, 19 left out. A
+  sentence is often split across two screens, so a line is joined to the one before it, in the same file and
+  within two seconds, when that one hangs (it ends in "...", a comma or a dangling word, or opens a clause
+  that needs another) or this one opens with "..." or a joining word, and the two fit a row. A join never
+  crosses a change of speaker: not after a line that has finished (it ends in a final particle, "?" or "!"),
+  not onto a line the file marks with a dialogue dash, and not between ค่ะ and ครับ. A row carries the row
+  before it as context when at most two seconds separate them and no line between them was left out. Sound
+  and music tags, formatting marks and a leading speaker dash are removed. Skipped: song lyrics (a music mark
+  at either end of the raw line, and the lines between an opening mark and its closing one), credit and
+  fansubber lines ("subtitles by", "แปลโดย", "ซับ", web addresses, season announcements), a line where "/"
+  runs two speakers together, a line that only calls somebody (a title or honorific with a name), a line
+  under 20 Thai letters with no word that shows something is being said (a bare name or noun phrase), and a
+  half sentence that found nothing to join. The reader also counts, for each subtitle file, its Thai lines,
+  those with a particle of speech and its possessives ("ของฉัน", "ของคุณ"); `films.json` holds the rates for
+  the reduction. There is no cap for the source or a film.
+- **Video captions (YODAS).** A caption line is a screenful, not a sentence. One video's lines are joined
+  until a line closes with a polite particle (ครับ, ค่ะ) not preceded by นะ, or with closing punctuation, or
+  with a looser closing word just before a pause of two seconds. Lines cut off by a pause or by a change of
+  speaker are thrown away. Videos that are not mostly Thai or that advertise gambling are skipped.
+- **Conversation transcripts (LOTUSDIS).** What one person says before another speaks is one turn; its
+  pieces are joined, and a row ends where a piece closes on a final particle.
+- **Common Voice collector file.** One sentence a row. About a third is machine translation from English;
+  rows with the written pronouns that such translation overuses are skipped, and much of it remains.
+- **Social media posts (wisesight).** One post a row. Skipped: a post with no verb (a product name or a
+  tag); one with two or more quoted phrases (a news headline); advertising and news copy, which shows in
+  promotion words or in a brand named twice with no "I", "you" or question in the post; and a post whose
+  letters are garbled (marks stacked as no Thai word has them).
+- **Restaurant reviews (Wongnai).** A review is typed as several lines and each line is a row. Lines that
+  are a dish, a price or a rating are skipped: bullets and numbered items, lines with no verb (for a line
+  under 40 Thai letters, no verb of eating or visiting and no word of judgement), lines under 20 characters,
+  and lines where lost emoji left "??".
+- **Call-centre requests (TrueVoice).** One utterance a row. The publisher blanked some numbers; an
+  utterance with such a hole ("เช็ต . บาท", or a lone "G" left of "3G") is skipped, as is a bare topic: no
+  verb, or under 30 characters with no particle, pronoun or question word.
 - **Questions (Dolly).** Only the questions people wrote are taken, from records that have no reference
   text, and not those typed without a capital or that point at a text that is not in the row.
 
@@ -233,11 +322,13 @@ Each row is counted in the manifest under the first filter that removed it.
 
 ## 5. Quality check
 
-A source is kept only if a random sample of 100 of its rows, labelled row by row, has at least 85 good rows
-and at most 3 that should not be translated. There are two bars:
+A source passes if a random sample of 100 of its rows, labelled row by row, has at least 85 good rows and at
+most 3 that should not be translated. A source well under the bar is not taken. A Thai source a little
+under it is kept as the candidate pool (`pool` in section 1), for the later reduction to decide. There are two bars:
 
 - **Prose bar**, for written text: a good row is complete, self-contained and natural.
-- **Utterance bar**, for speech and chat (OASST2 Thai, Common Voice Thai): a good row is a complete
+- **Utterance bar**, for speech, chat, reviews and questions typed to an assistant (OASST2 Thai, Common Voice
+  Thai, Wongnai, TrueVoice, WangchanThaiInstruct, OpenSubtitles, wisesight): a good row is a complete
   utterance a person would say and a translator could translate. Fillers and dropped subjects are allowed.
 
 Samples were labelled by model reviewers working from a written rubric, not by Thai speakers, and reviewers
@@ -263,9 +354,11 @@ here, 99 independently) are flagged.
 | `taskmaster3` | prose | 97 | 3 | 0 |
 | `sgd` | prose | 83 | 17 | 0 |
 | `dolly` | prose | 87 | 13 | 0 |
-| `iapp` | prose | 76 | 24 | 0 |
 | `oasst2_th` | utterance | 100 | 0 | 0 |
 | `commonvoice_th` | utterance | 100 | 0 | 0 |
+| `truevoice` | utterance | 89 | 11 | 0 |
+| `wongnai` | utterance | 94 | 6 | 0 |
+| `wangchan` | utterance | 94 | 6 | 0 |
 | `tatoeba_th` | prose | 100 | 0 | 0 |
 | `tatoeba_en` | prose | 96 | 4 | 0 |
 | `soda` | prose | 97 | 3 | 0 |
@@ -277,22 +370,75 @@ here, 99 independently) are flagged.
 | `voathai` | prose | 89 | 11 | 0 |
 | `voathai_para` | prose | 88 | 12 | 0 |
 | `thailaw` | prose | 93 | 7 | 0 |
+| `thailaw_clauses` | prose | 94 | 5 | 1 |
+| `court` | prose | 95 | 5 | 0 |
 | `thwiki` | prose | 82 | 18 | 0 |
-| `thwiki_para` | prose | 67 | 33 | 0 |
 | `simplewiki` | prose | 92 | 7 | 1 |
 | `commonvoice_wiki` | prose | 95 | 5 | 0 |
-| `lotusdis` | utterance | 78 | 22 | 0 |
 
-LOTUSDIS, `thwiki_para` and `iapp` are in this table but are not taken. Rows of the English dialogue and chat sources were
-judged with the turn before in view.
+Rows of the English dialogue and chat sources were judged with the turn before in view.
+
+The candidate pool, with its latest scores (this build's reviewers; then an independent review where one was made):
+
+| Source | Bar | Good | Flawed | Not to translate | Independent |
+|---|---|---:|---:|---:|---|
+| `opensubtitles_th` | utterance | 77 | 15 | 7 | 232/46/22 of 300 rows of the reduced set, labelled strictly; 81/19/0 on a 100-row sample before |
+| `wisesight` | utterance | 94 | 3 | 3 | 82/13/5, before the advertising rules |
+| `yodas` | utterance | 81 | 18 | 1 | 72/22/6 |
+| `commonvoice_th_collector` | utterance | 80 | 19 | 1 | none |
+| `lotusdis` | utterance | 78 | 22 | 0 | none |
+| `iapp` | prose | 76 | 24 | 0 | 82/18/0 |
+| `thwiki_para` | prose | 67 | 33 | 0 | 79/21/0 |
 
 ## 6. The mix
 
 Each source has a `take`: the number of rows it gives, or `None` for every usable row. Rows are chosen by a
 fixed pseudo-random order of their ids (a hash), so a partial take is a spread sample and comes out the same
 every time. There is no target total. Capped sources: SODA and Tatoeba English 100,000 each (both repeat
-themselves), Thai law 50,000 (it has fewer). iApp, YODAS, LOTUSDIS and `thwiki_para` have a take of 0. Every other source gives
-all its usable rows.
+themselves). Every other source gives all its usable rows; no Thai source is capped. Sources are read in
+this order: those that passed the bar before the candidate pool, and tier 1 before tier 2. So no row is
+dropped as the duplicate of one that the later reduction, or leaving tier 2 out, may remove.
+
+### The reduced set
+
+The pool is not what gets translated. A last stage, `reduce`, reads `sources.jsonl` and writes
+`data/distill/distill_set.jsonl`, the set that would be translated, with `distill_set.json` beside it: its
+sha256, its rows by source, language, tier and register, what each rule removed from each source, the
+look-alike groups, and the rules' settings. The pool is left as it is, so it can be reduced again with other
+rules. A row is counted under the first rule that removes it, in this order:
+
+1. **Tier.** `reduce_tier1` leaves every tier 2 row out.
+2. **Candidate pool.** A source marked `candidate` stays in the pool only. Two are admitted all the same:
+   wisesight, which reached the bar after its fixes (94 good rows in 100), and OpenSubtitles Thai, which is
+   close to the bar but under it (232 good rows in 300 in the reduced set and 22 unusable, most of those half sentences). It is in by the
+   owner's decision, because it is the only large body of conversational Thai.
+3. **Subtitle films in the worst band.** A film that lost 70% or more of its subtitle lines to the filters,
+   or where 1% or more of lines mix rude and polite pronouns, is left out whole: 231 of 5,767 films. So is a subtitle file that reads as raw machine translation: one with
+   50 Thai lines or more whose share of lines with a particle of speech (ครับ, นะ, สิ, ไหม and the like), less
+   its possessives per line, is under 0.04. People who subtitle by hand write those particles; the machine
+   translation of the time wrote almost none and kept every English "my" and "your". 180 files of 166 films.
+4. **Junk a rule can find.** Rows that are mostly digits; Thai rows that are mostly Latin letters; a
+   character repeated six times or more ("55555555", "soooooo"); leftover markup; credit lines.
+5. **Too short to teach.** Thai rows under 8 letters once final particles are taken off, and English rows
+   under 3 words. A short row that has a context line is a reply ("ใช่ครับ", "ขอบคุณ") and stays, up to 20
+   rows of each.
+6. **Look-alike duplicates.** Two rows are look-alikes when they are the same after Unicode NFKC folding,
+   lower-casing, removing punctuation and spaces, replacing every digit with 0, and for Thai taking off the
+   final particles (ครับ, ค่ะ, คะ, นะ, จ้ะ, จ้า, เลย, สิ, ซิ, หรอก, น่ะ, อ่ะ, ล่ะ, เถอะ, ด้วย). One row of each group
+   is kept: a tier 1 row before a tier 2 one, then one with context, then the longer text, then the earlier.
+   A Thai sentence may stay once in each politeness (closing with ครับ, with ค่ะ or คะ, or with neither),
+   because a chat translator has to learn all three.
+7. **Near-duplicates.** The step of filter 16 is run again over everything that is left, across sources:
+   rows of 50 letters or more whose first or last 40 letters match and that `difflib` rates 0.8 similar. The
+   pool has already been through it once, so it finds few.
+
+The stage adds no quality cap and no balance between registers or languages.
+
+The reduced set built from the present pool holds 8,731,390 rows: 3,700,902 English and 5,030,488 Thai
+(tier 1 4,202,378, tier 2 4,529,012). Removed: 84,372 rows of candidate sources not admitted; 118,477 of
+machine-translated subtitle files; 72,186 of subtitle films in the worst band; 48,917 look-alike duplicates
+(51,505 groups, with 23,306 rows kept as politeness variants); 8,541 too short and 11 short replies over the
+cap; 1,662 with repeated characters; 127 credit lines; 13 near-duplicates; 5 of markup or numbers.
 
 ## 7. Commands
 
@@ -301,10 +447,13 @@ python -m train.distill_sources fetch       # download what is missing and check
 python -m train.distill_sources             # candidates, near, mix
 python -m train.distill_sources near mix    # redo near-duplicate removal and the mix
 python -m train.distill_sources mix         # re-balance after changing a take
+python -m train.distill_sources mix_tier1   # the same mix with every tier 2 source left out
+python -m train.distill_sources reduce      # from the pool to distill_set.jsonl, the set to translate
+python -m train.distill_sources reduce_tier1  # the same without tier 2
 ```
 
 `candidates` reads the downloads and writes `filtered.jsonl`. `near` writes `candidates.jsonl`. `mix`
-writes `sources.jsonl` and `manifest.json`. Nothing else is needed: no hand edits, no login, no other script.
+writes `sources.jsonl` and `manifest.json`. `reduce` writes `distill_set.jsonl` and `distill_set.json`, in about five minutes. Nothing else is needed: no hand edits, no login, no other script.
 
 Before the build, the same checkout needs the published corpus and its tokenizer
 (`python -m train.release fetch`, `python -m train.corpus`, `python -m train.tokenizer`, or the corpus
@@ -313,7 +462,7 @@ release unpacked). The build stops if `models/tokenizer-v1/tokenizer.model` is n
 
 ## 8. Pinned inputs
 
-- **Every download is pinned by address and sha256** in `PINS`: 132 files, 3.6 GB. A file that no longer matches
+- **Every download is pinned by address and sha256** in `PINS`: 247 files, 4.2 GB. A file that no longer matches
   stops the build. Hugging Face and GitHub files are addressed by commit or release, so the address itself is fixed.
 - **Python and libraries, exact versions used:** Python 3.12.13, `pyarrow` 26.0.1, `sentencepiece` 0.2.3.
   These are the versions the corpus release workflow installs. No other package is needed. The exact
@@ -365,8 +514,8 @@ No workflow exists yet. Open items:
 
 The build uses no random numbers, no threads of its own and no clock. Files and archive members are read in
 sorted order, hashes are BLAKE2 and SHA-256 and do not depend on Python's hash seed, and sets are used only
-for membership tests, never for output order. Output is written as UTF-8 with `\n` line ends. The present version was run twice from the same downloads and
-gave the same `sources.jsonl`, `candidates.jsonl` and `manifest.json`, byte for byte.
+for membership tests, never for output order. Output is written as UTF-8 with `\n` line ends. The present version was run twice from the same downloads and gave
+the same `sources.jsonl`, `candidates.jsonl`, `manifest.json` and `films.json`, byte for byte.
 
 What could still differ on another platform, and has not been tested:
 
@@ -384,10 +533,11 @@ Measured on an Apple M4 Max laptop:
 | Step | Wall time | Peak memory |
 |---|---:|---:|
 | `fetch`, all files (3.6 GB) | not timed as one run | not measured |
-| `candidates`, `near` and `mix` together | 29 minutes | 4.6 GB |
+| `candidates`, `near` and `mix` together | 45 minutes | 5.3 GB |
 
-Peak disk is about 8 GB: 3.6 GB of downloads, 1.7 GB `filtered.jsonl`, 1.6 GB `candidates.jsonl` and 1.1 GB
+Peak disk is about 16 GB: 4.2 GB of downloads, 4.1 GB `filtered.jsonl`, 4.0 GB `candidates.jsonl` and 3.4 GB
 `sources.jsonl`, plus the corpus. A standard GitHub-hosted Linux runner has 4 cores, 16 GB of memory,
-about 14 GB of free disk and a 6-hour limit, so memory and disk fit. The build is single-threaded and the
+about 14 GB of free disk and a 6-hour limit, so memory fits and disk no longer does without deleting
+`filtered.jsonl` after `near`, or a larger runner. The build is single-threaded and the
 runner's cores are slower: allow an hour and set the job's timeout above the corpus workflow's 30 minutes.
 `sources.jsonl` should be compressed for a release asset.
