@@ -1,6 +1,7 @@
 """Have a hosted teacher translate a file of sentences, for distillation and for scoring the teacher.
 
-Input is JSON lines of {id, text, to} with to "th" or "en". Output repeats each row with the
+Input is JSON lines of {id, text, to} with to "th" or "en", or source-set rows of {id, text, lang}; a
+context line, if a row has one, is shown to the teacher and not translated. Output repeats each row with the
 translation and the tokens billed. A second run with the same --out skips ids already written.
 
 python -m train.teacher --in sources.jsonl --out teacher.jsonl
@@ -17,19 +18,30 @@ LANGUAGES = {"th": "Thai", "en": "English"}
 KEY_FILE = Path.home() / ".config/thaipoai/deepseek_key"
 
 
-def request_body(text, to, model, temperature):
+def request_body(text, to, model, temperature, context=None):
+    system = f"You are a translator. Translate the user's message into natural {LANGUAGES[to]}, keeping its meaning and tone. Reply with the translation only."
+    if context:  # in the system turn, so the line before is read but never translated
+        system += f" For context only, the line that came before the message was: {json.dumps(context, ensure_ascii=False)}. Do not translate that line."
     return {
         "model": model, "temperature": temperature, "max_tokens": 512,
         "thinking": {"type": "disabled"}, "reasoning_effort": "none",  # thinking is on by default and bills as output
-        "messages": [
-            {"role": "system", "content": f"You are a translator. Translate the user's message into natural {LANGUAGES[to]}, keeping its meaning and tone. Reply with the translation only."},
-            {"role": "user", "content": text},
-        ],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": text}],
     }
 
 
+def target_of(row):
+    """A row names its target as to, or its own language as lang, as source-set rows do."""
+    return row.get("to") or {"en": "th", "th": "en"}[row["lang"]]
+
+
+def pair_of(result):
+    """A translated source-set row as a training pair, keeping what the trainer reads."""
+    pair = {result["lang"]: result["text"], target_of(result): result["output"]}
+    return {**pair, **{k: result[k] for k in ("id", "lang", "source", "use", "context") if k in result}}
+
+
 def translate(row, endpoint, key, model, temperature, attempts=4):
-    body = json.dumps(request_body(row["text"], row["to"], model, temperature)).encode()
+    body = json.dumps(request_body(row["text"], target_of(row), model, temperature, row.get("context"))).encode()
     for attempt in range(attempts):
         try:
             request = urllib.request.Request(endpoint + "/v1/chat/completions", body, {"Content-Type": "application/json", "Authorization": f"Bearer {key}"})

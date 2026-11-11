@@ -42,15 +42,18 @@ class Settings:
 
 
 def examples_from(rows, tokenizer, alpha=0.0, seed=""):
-    """Each pair teaches both directions. Examples over the longest bucket are dropped and counted.
+    """Each pair teaches both directions, unless it is marked use "forward_only": then only the
+    direction that reads the side a person wrote (its lang) and writes the other is taught.
+    Examples over the longest bucket are dropped and counted.
     With alpha, every text gets a sampled segmentation that the seed fixes."""
     th, en = tokenizer.marker("<th>"), tokenizer.marker("<en>")
     kept, dropped = [], 0
     if alpha:
         sentencepiece.set_random_generator_seed(random.Random(seed).getrandbits(31))
     all_english, all_thai = tokenizer.encode([r["en"] for r in rows], alpha), tokenizer.encode([r["th"] for r in rows], alpha)
-    for english, thai in zip(all_english, all_thai):
-        for example in (([th, *english, EOS], thai), ([en, *thai, EOS], english)):
+    for row, english, thai in zip(rows, all_english, all_thai):
+        directions = {"en": ([th, *english, EOS], thai), "th": ([en, *thai, EOS], english)}  # keyed by the language read
+        for example in ([directions[row["lang"]]] if row.get("use") == "forward_only" else directions.values()):
             if bucket_of(example) is None:
                 dropped += 1
             else:

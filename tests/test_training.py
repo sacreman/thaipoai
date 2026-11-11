@@ -207,3 +207,25 @@ def test_the_outside_score_uses_unseen_pairs_from_each_origin(tmp_path):
 
     report = outside_scorer(tmp_path / "other.jsonl", tokenizer, {"seen in training"})(Echo())
     assert len(asked) == 4 and set(report) == {"outside", "outside_news", "outside_book"}
+
+
+def test_a_forward_only_pair_teaches_only_the_direction_that_reads_its_own_language(tmp_path):
+    text = ["น้ำเย็นมาก ขอบคุณครับ", "Thank you very much"]
+    train_tokenizer(text * 40, tmp_path / "t.model", 40)
+    tokenizer = Tokenizer(tmp_path / "t.model")
+    pair = {"en": text[1], "th": text[0]}
+    both, _ = train_module.examples_from([pair], tokenizer)
+    only, _ = train_module.examples_from([{**pair, "lang": "th", "use": "forward_only"}], tokenizer)
+    assert len(both) == 2 and len(only) == 1
+    assert only[0][0][0] == tokenizer.marker("<en>") and tokenizer.decode(only[0][1]) == text[1]  # Thai in, English out
+
+
+def test_the_teacher_takes_source_set_rows_shows_context_and_returns_a_marked_pair():
+    from train import teacher
+    row = {"id": "a", "text": "เขาเกิดที่นั่น", "lang": "th", "source": "thwiki", "use": "forward_only", "context": "สมชายเป็นนักเขียน"}
+    assert teacher.target_of(row) == "en" and teacher.target_of({"to": "th", "lang": "th"}) == "th"
+    messages = teacher.request_body(row["text"], "en", "m", 0.7, row["context"])["messages"]
+    assert row["context"] in messages[0]["content"] and messages[1]["content"] == row["text"]
+    assert "context" not in teacher.request_body("hi", "th", "m", 0.7)["messages"][0]["content"]
+    assert teacher.pair_of({**row, "output": "He was born there."}) == {
+        "th": row["text"], "en": "He was born there.", "id": "a", "lang": "th", "source": "thwiki", "use": "forward_only", "context": row["context"]}
