@@ -378,18 +378,49 @@ def abcd(path="abcd/abcd_v1.1.json.gz"):
 LETTER_SPACED = re.compile(r"\b(?:\w ){3,}\w\b")  # "h e l l o"
 
 
-def byu(path="byu/dataset.json"):
-    """Informal chat, one message a row, with the message before it in the conversation as context. Messages
-    spelled out a letter at a time are left out, and so are the test lines the organisers planted."""
+# A message that carries on the sentence the same person's last message left open: "...you get alot more" / "out of it".
+CARRIES_ON = re.compile(r"(?:and|but|that|out|from|to|of|or|so|than|which|because)\b")
+LEFT_OPEN = re.compile(r"(?i)(?:,|\b(?:but|and|more|the|a|to|like))$")
+# A reply with nothing in it but pronouns and auxiliaries ("you do huh?") says something only as an answer.
+EMPTY_WORDS = frozenset("""i you he she it we they me him her us them this that these those do does did is are am was were be been have has had
+can could will would shall should may might must not no so too huh oh""".split())
+CONTRACTIONS = re.compile(r"n't\b|'(?:s|re|m|ll|d|ve)\b|’(?:s|re|m|ll|d|ve|t)\b")
+
+
+def byu(path="byu/dataset.json", counts=None):
+    """Informal chat, one message a row, with the message before it in the conversation as context. The
+    source lists each conversation's messages in the order they were sent, grouped into one sender's runs.
+
+    People split one sentence over two messages. So a message is joined to the same sender's message just
+    before it when that one was left open (it ends in a comma or a dangling word) or has no closing mark and
+    this one opens with a lowercase joining word, as long as the two fit a row. A reply of five words or
+    fewer made only of pronouns and auxiliaries is kept only after a question from the other person. Messages
+    spelled out a letter at a time are left out, and so are the test lines the organisers planted.
+    counts, if given, is a Counter that receives how many messages were joined and dropped."""
+    counts = collections.Counter() if counts is None else counts
     with raw(path) as handle:
         for conversation, body in json.load(handle).items():
-            previous = None
+            previous, asked = None, False  # the message before, and whether it was the other person's question
             for t, turn in enumerate(body["messages"]):
+                rows = []  # this sender's run, as [id, text]
                 for k, message in enumerate(turn):
                     text = message["text"].strip()
-                    if not BYU_INJECTED.match(text) and not LETTER_SPACED.search(text):
-                        yield f"byu-{conversation}-{t}-{k}", text, "en", previous
-                        previous = text
+                    if BYU_INJECTED.match(text) or LETTER_SPACED.search(text) or not text:
+                        continue
+                    last = rows[-1][1] if rows else ""
+                    if last and len(last) + len(text) < MAX_CHARS["en"] and (LEFT_OPEN.search(last) or (last[-1] not in ".!?…" and CARRIES_ON.match(text))):
+                        rows[-1][1] = f"{last} {text}"
+                        counts["joined"] += 1
+                    else:
+                        rows.append([f"byu-{conversation}-{t}-{k}", text])
+                for row_id, text in rows:
+                    words = WORD.findall(CONTRACTIONS.sub(" ", text.casefold()))
+                    if len(words) <= 5 and set(words) <= EMPTY_WORDS and not asked:
+                        counts["empty reply"] += 1
+                    else:
+                        yield row_id, text, "en", previous
+                    previous, asked = text, False  # the next row's context is this message, whole, kept or not
+                asked = bool(rows) and rows[-1][1].endswith("?")
 
 
 # Stage directions the model wrote into a turn, and short turns that only greet or thank.

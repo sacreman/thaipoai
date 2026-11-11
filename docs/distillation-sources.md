@@ -9,7 +9,7 @@ covered here. It is not deterministic and is recorded separately.
 
 ## 1. What the set is
 
-`data/distill/sources.jsonl` holds 4,108,224 rows: 3,707,320 English and
+`data/distill/sources.jsonl` holds 4,102,205 rows: 3,701,301 English and
 400,904 Thai. Each row is one chat utterance, or one or more whole sentences of prose:
 
 ```json
@@ -18,7 +18,7 @@ covered here. It is not deterministic and is recorded separately.
 
 - `context` is what stands just before the row: on dialogue rows the turn before in the same conversation,
   on Thai prose rows the sentence before in the same article. It is there so the translator knows what is
-  being answered, or who an unstated subject is. Only `text` is to be translated. 779,641 rows carry one.
+  being answered, or who an unstated subject is. Only `text` is to be translated. 773,203 rows carry one.
 - `repairs`, when present, lists what was changed in the text: a leading connective removed, a label or
   option marker removed, a bracket of Chinese, Japanese or Korean removed, a doubled Thai sara e corrected, a trailing connective
   removed from a spoken row.
@@ -32,9 +32,9 @@ covered here. It is not deterministic and is recorded separately.
 filter, licence and attribution line, and every input file's address, sha256, size and whether it can
 be fetched again.
 
-Lengths, measured with the project's tokenizer: 92.3 characters on average
-(200 at the 95th percentile) and 26.0 tokenizer pieces
-(57 at the 95th percentile). English averages 86.0 characters, Thai 150.2.
+Lengths, measured with the project's tokenizer: 92.4 characters on average
+(201 at the 95th percentile) and 26.1 tokenizer pieces
+(57 at the 95th percentile). English averages 86.1 characters, Thai 150.2.
 
 Everything is built by one module, `train/distill_sources.py`. Its tests are in `tests/test_distill_sources.py`.
 
@@ -46,7 +46,7 @@ redistribution, and can be combined into a CC BY-SA 4.0 release.
 
 | Source | Dataset | Language | Register | Licence | Rows | Attribution |
 |---|---|---|---|---|---:|---|
-| `byu_chitchat` | BYU Chit-Chat Dataset | English | informal chat | [MIT](https://opensource.org/license/mit) | 189,635 | Copyright (c) 2019 Perception, Control and Cognition Lab, Brigham Young University |
+| `byu_chitchat` | BYU Chit-Chat Dataset | English | informal chat | [MIT](https://opensource.org/license/mit) | 183,594 | Copyright (c) 2019 Perception, Control and Cognition Lab, Brigham Young University |
 | `abcd` | Action-Based Conversations Dataset | English | customer-service chat | [MIT](https://opensource.org/license/mit) | 19,848 | Copyright (c) 2021 ASAPP Research |
 | `multiwoz` | MultiWOZ 2.2 | English | task dialogue | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 42,223 | Budzianowski and others 2018; Zang and others 2020. Also offered under MIT in the GitHub repository |
 | `taskmaster2` | Taskmaster-2 | English | spoken task dialogue | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 48,481 | Byrne, Krishnamoorthi, Ganesh, Dubey, Kim and Cedilnik, Google LLC |
@@ -147,8 +147,16 @@ Sources that were examined and not built:
     English-named ones, 5,033 of 189,458 articles in all.
 - **Task dialogues.** Only the user's or customer's side is taken, with the turn before as context. The other
   side is written from templates.
-- **Informal chat (BYU).** Each message is a row, with the message before it in the conversation as context.
-  Messages spelled out a letter at a time are skipped.
+- **Informal chat (BYU).** Each message is a row, with the message just before it in the same conversation
+  as context. The source lists messages in the order they were sent. Two people often type at once, so the
+  message before is sometimes the sender's own or belongs to another thread of the talk: it is carried as it is.
+  - People split one sentence over two messages. A message is joined to the same sender's message just before
+    it when that one ends in a comma or a dangling word (but, and, more, the, a, to, like), or has no closing
+    mark and this one opens with a lowercase joining word (and, but, that, out, from, to, of, or, so, than,
+    which, because). Joins chain while the row stays within the length limit.
+  - A reply of five words or fewer made only of pronouns and auxiliaries ("you do huh?") is kept only when
+    the message before it is the other person's question.
+  - Messages spelled out a letter at a time are skipped.
 - **SODA** is read at one dialogue in four, each turn with the turn before as context. Turns holding a stage
   direction in brackets or asterisks, and turns of eight words or fewer that only greet or thank, are skipped.
 - **Global Voices.** Quoted blog posts are left out, and so are posts with fewer than six sentences of their own
@@ -357,9 +365,8 @@ No workflow exists yet. Open items:
 
 The build uses no random numbers, no threads of its own and no clock. Files and archive members are read in
 sorted order, hashes are BLAKE2 and SHA-256 and do not depend on Python's hash seed, and sets are used only
-for membership tests, never for output order. Output is written as UTF-8 with `\n` line ends. The version before the last tidy pass was run twice from the same
-downloads and gave the same `sources.jsonl`, `candidates.jsonl` and `manifest.json`, byte for byte. The
-present version has been run once.
+for membership tests, never for output order. Output is written as UTF-8 with `\n` line ends. The present version was run twice from the same downloads and
+gave the same `sources.jsonl`, `candidates.jsonl` and `manifest.json`, byte for byte.
 
 What could still differ on another platform, and has not been tested:
 
@@ -377,7 +384,7 @@ Measured on an Apple M4 Max laptop:
 | Step | Wall time | Peak memory |
 |---|---:|---:|
 | `fetch`, all files (3.6 GB) | not timed as one run | not measured |
-| `candidates`, `near` and `mix` together | 28 minutes | 4.6 GB |
+| `candidates`, `near` and `mix` together | 29 minutes | 4.6 GB |
 
 Peak disk is about 8 GB: 3.6 GB of downloads, 1.7 GB `filtered.jsonl`, 1.6 GB `candidates.jsonl` and 1.1 GB
 `sources.jsonl`, plus the corpus. A standard GitHub-hosted Linux runner has 4 cores, 16 GB of memory,

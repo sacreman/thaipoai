@@ -531,3 +531,29 @@ def test_tidy_pass_rules(raw):
     rows = [("a", "เขาเริ่มทำงานเป็นครูสอนภาษาที่โรงเรียนประจำจังหวัดเมื่ออายุได้ยี่สิบปี", "th", None), ("b", "เขาเริ่มทำงานเป็นวิศวกรที่โรงงานผลิตรถยนต์ในกรุงเทพเมื่ออายุได้ยี่สิบสองปี", "th", "สมชายเกิดที่จังหวัดเชียงใหม่ในครอบครัวชาวนา")]
     kept = d.sift(PROSE, rows, lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), counts)
     assert [r["id"] for r in kept] == ["b"] and counts["subject in the row before"] == 1  # "he ..." with no sentence before it
+
+
+def test_chat_messages_split_mid_sentence_are_joined_and_empty_replies_dropped(raw):
+    def message(text, sender):
+        return {"text": text, "sender": sender}
+
+    talk = [[message("the best part is that they hold their value so you get a lot more", "a"), message("out of it", "a"), message("Have you seen the new one?", "a")],
+            [message("you do huh?", "b")],  # only pronouns and auxiliaries, but it answers a question
+            [message("I love rock climbing,", "a"), message("it is the best thing we do all year", "a"), message("it is", "a")],
+            [message("that it is", "b"), message("We should go together sometime.", "b")]]
+    write(raw / "byu/dataset.json", json.dumps({"c1": {"messages": talk}, "c2": {"messages": [[message("A new conversation starts here.", "c")]]}}))
+    counts = collections.Counter()
+    rows = list(d.byu(counts=counts))
+    assert [r[1] for r in rows] == ["the best part is that they hold their value so you get a lot more out of it", "Have you seen the new one?", "you do huh?",
+                                    "I love rock climbing, it is the best thing we do all year", "We should go together sometime.", "A new conversation starts here."]
+    assert counts == {"joined": 2, "empty reply": 2}
+
+
+def test_chat_context_is_the_message_just_before_in_the_same_conversation(raw):
+    talk = {"c1": {"messages": [[{"text": "First message of the first chat.", "sender": "a"}, {"text": "Second message of the first chat.", "sender": "a"}],
+                                [{"text": "Third message, from the other person.", "sender": "b"}]]},
+            "c2": {"messages": [[{"text": "First message of the second chat.", "sender": "c"}], [{"text": "Second message of the second chat.", "sender": "d"}]]}}
+    write(raw / "byu/dataset.json", json.dumps(talk))
+    rows = list(d.byu())
+    assert [r[3] for r in rows] == [None, rows[0][1], rows[1][1], None, rows[3][1]]  # never from another conversation, never skipping one
+    assert [r[0] for r in rows] == ["byu-c1-0-0", "byu-c1-0-1", "byu-c1-1-0", "byu-c2-0-0", "byu-c2-1-0"]
