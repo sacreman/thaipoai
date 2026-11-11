@@ -54,7 +54,9 @@ def test_reject_names_what_is_wrong():
     assert d.reject("The postcode is cb58rs and the train is TR1234.", "en") == "contact details"
     assert d.reject("I live at 8061 Primrose Ave now.", "en") == "contact details" and d.reject("call (817) 721-3816 after five", "en") == "contact details"
     assert d.reject("My login is davidwilliams576 on the site.", "en") == "contact details"
-    assert d.reject("It's Joseph Banter.", "en", TALK) == "contact details" and d.reject("Crystal Minh", "en", TALK) == "contact details"
+    assert d.reject("It's Joseph Banter.", "en", TALK) == "contact details"
+    assert d.reject("Yes, my name is Joyce Wu and I ordered a coat.", "en", TALK) == "contact details"
+    assert d.reject("Your new promo code is 0TAXW today.", "en") == "contact details" and d.reject("Crystal Minh", "en", TALK) == "contact details"
     assert d.reject("The war lasted from 1939-1945 in Europe.", "en") is None
     assert d.reject("คณะวิศวกรรมศาสตร์ มหาวิทยาลัยแห่งหนึ่ง", "th", PROSE) == "not a sentence"  # a label: no verb
     assert d.reject("อำเภอนี้แบ่งการปกครองออกเป็นสามตำบลและยี่สิบหมู่บ้าน", "th", PROSE) is None
@@ -74,8 +76,8 @@ def test_thai_rows_that_stop_or_start_mid_thought_are_dropped():
     assert d.reject("เมื่อวานนี้ฉันไปตลาดกับแม่", "th") is None  # yesterday, not "when"
     assert d.reject("ซึ่งเป็นเมืองหลวงของประเทศ", "th") == "leans on the row before"
     assert d.reject("ทำให้การจราจรติดขัดทั่วทั้งเมือง", "th") == "leans on the row before"
-    assert d.reject("สามารถเดินทางไปยังตัวเมืองได้ด้วยรถไฟสายเหนือทุกวัน", "th", PROSE) == "leans on the row before"  # a verb with no subject
-    assert d.reject("ก่อนหน้านี้ ยังเป็นที่ตั้งของมหาวิทยาลัยที่เก่าแก่ที่สุดของประเทศ", "th", PROSE) == "leans on the row before"
+    assert d.reject("สามารถเดินทางไปยังตัวเมืองได้ด้วยรถไฟสายเหนือทุกวัน", "th", PROSE) == "subject in the row before"  # a verb with no subject
+    assert d.reject("ก่อนหน้านี้ ยังเป็นที่ตั้งของมหาวิทยาลัยที่เก่าแก่ที่สุดของประเทศ", "th", PROSE) == "subject in the row before"
     assert d.reject("ก่อนหน้านี้ เมืองนี้ยังเป็นที่ตั้งของมหาวิทยาลัยที่เก่าแก่ที่สุด", "th", PROSE) is None
 
 
@@ -193,6 +195,11 @@ def test_sentence_splitting():
     assert d.thai_sentences(f"{first} ส่วนใหญ่{second}") == [f"{first} ส่วนใหญ่{second}"]  # ส่วนใหญ่ is not the opener ส่วน
     assert d.thai_sentences(f"{first} (ดูเพิ่มที่ นอกจากนี้ {second})") == [f"{first} (ดูเพิ่มที่ นอกจากนี้ {second})"]  # inside brackets
     assert d.thai_sentences("สั้น ต่อมา ก็ยังสั้น") == ["สั้น ต่อมา ก็ยังสั้น"]
+    # merging before dropping: a sentence that leans on the one before, or is very short, is joined to it again
+    assert d.thai_sentences(f"{first} ดังนั้น {second}") == [f"{first} ดังนั้น {second}"]
+    assert d.thai_sentences(f"{first} นอกจากนี้ ยังมีตลาดน้ำที่นักท่องเที่ยวนิยมไปเยี่ยมชมกันมาก") == [f"{first} นอกจากนี้ ยังมีตลาดน้ำที่นักท่องเที่ยวนิยมไปเยี่ยมชมกันมาก"]
+    assert d.thai_sentences(f"{first} ปัจจุบัน ปิดแล้ว") == [f"{first} ปัจจุบัน ปิดแล้ว"]
+    assert len(d.thai_sentences(f"{first * 6} ดังนั้น {second}")) == 2  # unless the two no longer fit one row
     assert d.sentences("Here is how:\n- one\n1. two\nIt works. Try it.", "en") == ["Here is how:", "It works.", "Try it."]
     assert d.sentences("Run this:\n```\nls\n```", "en") == []
 
@@ -267,6 +274,9 @@ def test_question_and_answer_formats(raw):
     assert list(d.common_voice_wiki()) == [("commonvoice_wiki-a-2", "The river runs through the old town to the sea.\n", "en")]
 
 
+POST = "บริษัทเปิดตัวโทรศัพท์รุ่นใหม่เมื่อวานนี้ โดยมีหน้าจอขนาดใหญ่ขึ้นและแบตเตอรี่ที่ใช้งานได้นานกว่ารุ่นก่อนหน้าถึงสองเท่า"
+
+
 def test_parquet_formats(raw):
     pa = pytest.importorskip("pyarrow")
     import pyarrow.parquet as pq
@@ -278,15 +288,15 @@ def test_parquet_formats(raw):
     for split in ("train", "valid", "test"):
         table(f"soda/{split}.parquet", [{"dialogue": ["Hi there!", "Hello."], "original_index": 8}, {"dialogue": ["Skipped."], "original_index": 9}])
     assert list(d.soda())[:2] == [("soda-8-0", "Hi there!", "en", None), ("soda-8-1", "Hello.", "en", "Hi there!")] and len(list(d.soda())) == 6
-    table("blognone/train.parquet", [{"title": "t", "author": "a", "content": "บริษัทเปิดตัวโทรศัพท์รุ่นใหม่เมื่อวานนี้\n\nที่มา - สำนักข่าว"}])
-    assert list(d.blognone()) == [("blognone-0-0", "บริษัทเปิดตัวโทรศัพท์รุ่นใหม่เมื่อวานนี้", "th")]
+    table("blognone/train.parquet", [{"title": "t", "author": "a", "content": f"{POST}\n\n- รายการสั้น\n\nหัวข้อย่อย\n\nที่มา - สำนักข่าว"}])
+    assert list(d.blognone()) == [("blognone-0-0", POST, "th", None)]  # list items, headings and the source line go
     table("iapp/train.parquet", [{"question_id": "q_000", "question": "ใครเป็นผู้คิดค้นหลอดไฟ", "context": "ไม่ใช้"}])
     assert list(d.iapp()) == [("iapp-q_000", "ใครเป็นผู้คิดค้นหลอดไฟ", "th")]
 
 
 def test_every_source_is_pinned_and_capped_sources_are_the_repetitive_ones():
     take = {s.name: s.take for s in d.SOURCES}
-    assert {n for n, t in take.items() if t} == {"soda", "tatoeba_en", "simplewiki", "commonvoice_wiki", "iapp"}
+    assert {n for n, t in take.items() if t} == {"soda", "tatoeba_en", "iapp", "thailaw"}
     assert take["soda"] == take["tatoeba_en"] == 100_000 and set(d.PINS) == set(d.downloads())
 
 
@@ -306,6 +316,9 @@ def test_mix_takes_each_sources_share_and_repeats_exactly(tmp_path, monkeypatch)
     assert all("pieces" not in json.loads(line) for line in first.decode().splitlines()) and manifest["lengths"]["all"]["pieces_mean"] == 4
     d.mix()
     assert (tmp_path / "sources.jsonl").read_bytes() == first
+    monkeypatch.setattr(d, "SOURCES", (d.Source("big", "Big", "news", "CC0 1.0", "", "", "", 0, None), d.Source("small", "Small", "chat", "MIT", "", "", "", None, None)))
+    d.mix()
+    assert [json.loads(line)["source"] for line in (tmp_path / "sources.jsonl").read_text().splitlines()] == ["small", "small"]  # 0 drops a source, None takes all
 
 
 def test_near_duplicates_lose_to_the_earlier_row_and_short_rows_are_left_alone():
@@ -334,7 +347,7 @@ def test_voice_of_america_articles_that_name_a_wire_agency_are_left_out(raw):
         archive.addfile(*record(999, "article", ["บท ความ เก่า ที่ เว้น วรรค ผิด ทุก คำ ใน ประโยค นี้"]))
         archive.addfile(*record(2345678, "article", ["สำนักข่าวรอยเตอร์รายงานว่าราคาน้ำมันปรับตัวสูงขึ้นอีกครั้ง"]))
         archive.addfile(*record(3, "audio", ["รายการข่าวภาคเช้าประจำวันศุกร์ที่ผ่านมานี้"]))
-    assert list(d.voa_thai()) == [("voathai-1234567-0", "นายกรัฐมนตรีเดินทางเยือนกรุงวอชิงตันเมื่อวานนี้", "th")]
+    assert list(d.voa_thai()) == [("voathai-1234567-0", "นายกรัฐมนตรีเดินทางเยือนกรุงวอชิงตันเมื่อวานนี้", "th", None)]
 
 
 def test_leading_connectives_are_removed_and_logical_ones_make_the_row_lean():
@@ -354,3 +367,144 @@ def test_task_dialogues_lose_closings_garble_and_echoes():
     kept = d.sift(TALK, batch, lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), counts)
     assert [(r["id"], r.get("context")) for r in kept] == [("c", None), ("e", "Any other requests?")]  # a context holding a username is not carried
     assert counts == {"only a closing": 1, "garbled speech": 1, "too short": 1}
+
+
+SPOKEN = d.Source("spoken", "Spoken", "spoken", "CC0 1.0", "", "", "", None, None, spoken=True)
+
+
+def test_caption_lines_are_joined_into_whole_utterances_and_cut_off_ones_thrown_away():
+    captions = [(0, 100, "วันนี้เราจะมาทำ"), (100, 200, "แกงเขียวหวานกันนะครับ"), (200, 300, "เริ่มจากเตรียมเครื่องแกงก่อนครับ"),  # นะครับ is said mid-sentence
+                (300, 400, "[เสียงดนตรี]"), (400, 500, "ใส่กะทิลงไปแล้วก็"),  # cut off by the pause that follows
+                (900, 1000, "อร่อยมากเลย"),  # no polite particle: not kept
+                (2000, 2100, "- ไปไหนมา"), (2100, 2200, "ไปตลาดมาค่ะ")]
+    assert list(d.utterances(captions)) == [(0, "วันนี้เราจะมาทำ แกงเขียวหวานกันนะครับ เริ่มจากเตรียมเครื่องแกงก่อนครับ"), (6, "ไปไหนมา ไปตลาดมาค่ะ")]
+
+
+def test_spoken_rows_lose_a_trailing_connective_and_keep_a_spoken_opening():
+    assert d.prepare("เมื่อวานไปกินข้าวกับเพื่อนมา แล้วก็", "th", SPOKEN) == ("เมื่อวานไปกินข้าวกับเพื่อนมา", ["trailing connective removed"])
+    assert d.reject("แต่เมื่อวานฝนตกหนักมากเลยนะ", "th", SPOKEN) is None  # speech may open with "but"
+    assert d.reject("ซึ่งเป็นร้านที่อร่อยมากเลยนะ", "th", SPOKEN) == "leans on the row before"
+    assert d.reject("เมื่อวานเราไปกินข้าวที่", "th", SPOKEN) == "unfinished"
+    assert d.reject("เสร็จ เรียบร้อย นะครับ ซึ่ง ใช้ เวลา นาน", "th", SPOKEN) == "not a sentence"  # typed a word at a time
+
+
+def test_spoken_and_legal_formats(raw):
+    pa = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+
+    rows = [{"split": "train", "mic": "a", "speaker_id": "s1", "sentence": "เมื่อวานไปตลาดมา"}, {"split": "train", "mic": "a", "speaker_id": "s1", "sentence": "ซื้อปลามาสองตัวเลย"}, {"split": "train", "mic": "a", "speaker_id": "s1", "sentence": "แล้วก็ไปต่อที่"},
+            {"split": "train", "mic": "a", "speaker_id": "s2", "sentence": "ปลาที่ตลาดนั้นแพงไหม"}, {"split": "train", "mic": "a", "speaker_id": "s1&s2", "sentence": "พูดพร้อมกัน"},
+            {"split": "train", "mic": "a", "speaker_id": "s1", "sentence": "รหัส F 12"}]
+    write(raw / "lotusdis/transcripts.jsonl", "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    assert [t for _, t, _ in d.lotusdis()] == ["เมื่อวานไปตลาดมา ซื้อปลามาสองตัวเลย", "ปลาที่ตลาดนั้นแพงไหม"]  # pieces join up to a closing word, and the cut-off rest goes
+    messages = [{"message_id": "m1", "lang": "th", "role": "prompter", "deleted": False, "review_result": True, "synthetic": False, "text": "กาแฟช่วยให้ไม่ง่วงจริงหรือไม่"},
+                {"message_id": "m2", "lang": "th", "role": "assistant", "deleted": False, "review_result": True, "synthetic": False, "text": "คำตอบของผู้ช่วย"},
+                {"message_id": "m3", "lang": "th", "role": "prompter", "deleted": False, "review_result": True, "synthetic": False, "text": "สองบรรทัด\nไม่เอา"}]
+    write(raw / "oasst2/ready.messages.jsonl.gz", "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in messages), gzip.open)
+    assert list(d.oasst2("th")) == [("oasst2-m1", "กาแฟช่วยให้ไม่ง่วงจริงหรือไม่", "th")]
+    law = "พระราชบัญญัติตัวอย่าง\n\nมาตรา ๑ พระราชบัญญัตินี้เรียกว่า พระราชบัญญัติตัวอย่าง\n\nมาตรา ๕ ให้นายทะเบียนมีอำนาจ\nออกใบอนุญาตตามพระราชบัญญัตินี้\n\nใบอนุญาตให้มีอายุห้าปี\n\nหมวด ๒ บทกำหนดโทษ\n\nหัวข้อที่ไม่ใช่มาตรา"
+    (raw / "thailaw").mkdir()
+    pq.write_table(pa.Table.from_pylist([{"title": "t", "text": law, "__index_level_0__": 7}]), raw / "thailaw/0.parquet")
+    assert list(d.thai_law()) == [("thailaw-7-2", "ให้นายทะเบียนมีอำนาจ ออกใบอนุญาตตามพระราชบัญญัตินี้", "th"), ("thailaw-7-3", "ใบอนุญาตให้มีอายุห้าปี", "th")]
+
+
+def test_thai_prose_carries_the_sentence_before_and_long_paragraphs_go_to_their_own_source():
+    first, second = "กรุงเทพมหานครเป็นเมืองหลวงและนครที่มีประชากรมากที่สุดของประเทศไทย", "เมืองนี้ตั้งอยู่บนสามเหลี่ยมปากแม่น้ำเจ้าพระยาและมีประชากรราวสิบล้านคน"
+    rows = list(d.thai_rows("x-1", [f"{first} ต่อมา {second}", "ย่อหน้ายาว " * 30]))
+    assert [(r[0], r[3]) for r in rows] == [("x-1-0", None), ("x-1-1", first), ("x-1-2", f"ต่อมา {second}")]  # the sentence before may close the paragraph before
+    assert [r[0] for r in d.whole_paragraphs(rows)] == ["x-1-2"]
+    counts = collections.Counter()
+    lean = "สามารถเดินทางไปยังตัวเมืองได้ด้วยรถไฟสายเหนือทุกวัน"
+    batch = [("a", lean, "th", first), ("b", lean + "และรถประจำทาง", "th", None), ("c", "ซึ่งเป็นเมืองหลวงของประเทศมาตั้งแต่ปีพุทธศักราชสองพันสามร้อย", "th", first)]
+    kept = d.sift(PROSE, batch, lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), counts)
+    assert [(r["id"], r["context"]) for r in kept] == [("a", first)] and counts == {"subject in the row before": 1, "leans on the row before": 1}
+    assert d.reject("หมายเหตุ รายชื่อนี้เรียงตามลำดับเวลาที่เข้ารับตำแหน่งของแต่ละคน", "th", PROSE) == "not a sentence"
+    assert d.reject("พ.ศ. 2546 จัดทำป้อมยามใหม่และปรับปรุงซ่อมแซมพื้นหอประชุมของโรงเรียน", "th", PROSE) == "not a sentence"
+    assert d.reject("สมชาย ใจดี (เกิด 1 มกราคม พ.ศ. 2500) นักแสดงและนักร้องชาวไทยจากจังหวัดเชียงใหม่", "th", PROSE) == "not a sentence"  # no verb outside the brackets
+    news = d.Source("news", "News", "news", "CC0 1.0", "", "", "", None, None, prose=True, reported=True)
+    assert d.reject("ในแถลงการณ์เมื่อเดือนสิงหาคม กระทรวงต่างประเทศจีนระบุว่า รัฐบาลอเมริกัน", "th", news) == "unfinished"
+    assert d.reject("กระทรวงต่างประเทศจีนระบุว่า รัฐบาลอเมริกันควรยกเลิกมาตรการภาษีนำเข้าสินค้าทั้งหมดโดยเร็ว", "th", news) is None
+    para = d.Source("para", "Para", "news", "CC0 1.0", "", "", "", None, None, prose=True, **d.PARAGRAPH)
+    long_row = "รัฐบาลประกาศมาตรการใหม่เพื่อช่วยเหลือเกษตรกรที่ได้รับผลกระทบจากภัยแล้งในปีนี้ " * 4
+    assert d.reject(long_row.strip(), "th", PROSE) == "too long" and d.reject(long_row.strip(), "th", para) is None
+
+
+def test_templates_are_capped_and_customers_identities_dropped():
+    assert d.frame("I need a flight to Boston on March 3rd at 5 pm") == d.frame("I need a flight to Denver on June 21st at 10 am")
+    carried = d.Source("abcd", "A", "chat", "MIT", "", "", "", None, None, dialogue=True, frames=True, carried=True)
+    counts = collections.Counter()
+    batch = [("a", "I would like to return the boots I bought.", "en", None),  # first turn: no line before to carry
+             ("b", "It is the one from last week I think.", "en", "What is the address on the order?"),
+             ("c", "The boots are too small for my feet.", "en", "x" * 300),  # the line before cannot be carried
+             ("e", "They were a gift for my sister.", "en", "Why are you returning them?")]
+    kept = d.sift(carried, batch, lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), counts)
+    assert [r["id"] for r in kept] == ["a", "e"] and counts == {"contact details": 1, "needs the turn before": 1}
+    stubs = d.Source("wiki", "W", "e", "CC0 1.0", "", "", "", None, None, prose=True, stubs=True)
+    lead = "Bob Kane (October 24, 1915 – November 3, 1998) was an American cartoonist."
+    assert sum(d.reject(lead, "en", stubs, f"id-{i}") is None for i in range(400)) in range(70, 130)  # one in four stays
+
+
+def test_videos_of_translated_subtitles_are_left_out(raw):
+    (raw / "yodas").mkdir()
+    lines = [f"AAAAAAAAAAA-{i:05}-{i * 100:08}-{i * 100 + 90:08} ตอนที่ {i} วันนี้อากาศดีมากเลยครับ" for i in range(5)]
+    lines += [f"BBBBBBBBBBB-{i:05}-{i * 100:08}-{i * 100 + 90:08} ไปกันเถอะทุกคน!" for i in range(5)]
+    write(raw / "yodas/0.txt", "\n".join(lines) + "\n")
+    assert {row_id[6:17] for row_id, _, _ in d.yodas()} == {"AAAAAAAAAAA"}
+
+
+def test_thai_wiki_text_keeps_no_fused_sentences_holes_list_items_or_marked_articles(raw):
+    page = """{{กล่องข้อมูล|ชื่อ=ตัวอย่าง}}
+'''เมืองตัวอย่าง''' ({{langx|en|Sample City}}) เป็นเมืองหลวงของประเทศ<ref>อ้างอิง</ref>ตั้งอยู่ริมแม่น้ำ
+และมีประชากรราวหนึ่งล้านคน
+
+พลังงานของระบบเท่ากับ <math>E = mc^2</math> ตามทฤษฎีนี้
+
+เมืองนี้แบ่งการปกครองออกเป็นสามเขต ได้แก่
+
+เขตเหนือเป็นเขตที่ใหญ่ที่สุดของเมือง
+
+== ตัวละคร ==
+;สมชาย
+พระเอกของเรื่องซึ่งเป็นตำรวจหนุ่ม
+
+ย่อหน้าปกติที่อยู่หลังรายการตัวละครของเรื่องนี้
+"""
+    paragraphs = d.wiki_paragraphs(page, careful=True)
+    assert paragraphs[0] == "เมืองตัวอย่าง (Sample City) เป็นเมืองหลวงของประเทศ ตั้งอยู่ริมแม่น้ำ และมีประชากรราวหนึ่งล้านคน"  # a space where the reference and the line break were
+    assert d.HOLE in paragraphs[1] and paragraphs[2:] == ["ย่อหน้าปกติที่อยู่หลังรายการตัวละครของเรื่องนี้"]  # the list lead-in, its item and the glossary entry go
+    assert [r[1] for r in d.thai_rows("x", paragraphs)] == [paragraphs[0], paragraphs[2]] and list(d.thai_rows("x", paragraphs))[1][3] is None  # a holed sentence is no row and no context
+    assert d.WIKI_MAINTENANCE.search("{{ปรับภาษา}}\nข้อความ") and not d.WIKI_MAINTENANCE.search("{{ต้องการอ้างอิง}}\nข้อความ")
+    assert d.reject("หลังสำเร็จการศึกษาระดับปริญญาเอกแล้วหวังเป็นนักวิจัยหลังปริญญาเอกที่ในพรินซ์ตันเป็นเวลาสองปี", "th", PROSE) == "not a sentence"
+    assert d.reject("นายแพทย์แอนโธนี เฟาชี่ กล่าวต่อรายการ ของสถานีโทรทัศน์เอบีซีว่าตนจะไม่แปลกใจเลย", "th", PROSE) == "not a sentence"
+    first = "นอกจากการยืนยันโดยบัตรยืนยันการติดต่อที่นักวิทยุสมัครเล่นนิยมแลกเปลี่ยนกันแล้ว"
+    assert len(d.thai_sentences(f"{first} ปัจจุบันมีการยืนยันแบบอิเล็กทรอนิกส์ด้วยเช่นกัน")) == 1  # no cut after a clause that waits for its main clause
+    counts = collections.Counter()
+    row = "ลักษณะทางวากยสัมพันธ์ของภาษาไทยโดยรวมแล้วจะเรียงเป็นประธาน กริยา และกรรม"
+    batch = [("a", row, "th", "คำคุณศัพท์จะวางไว้หลังคำนาม " + row), ("b", "เมืองนี้มีประชากรราวหนึ่งล้านคนและมีพื้นที่กว้างใหญ่มาก", "th", "เขากล่าวกับผู้สื่อข่าวว่า")]
+    kept = d.sift(PROSE, batch, lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), counts)
+    assert [(r["id"], r.get("context")) for r in kept] == [("a", None), ("b", None)]  # a context that holds the row, or is cut off, is not carried
+
+
+def test_a_forward_only_source_marks_every_row_and_the_manifest(tmp_path, monkeypatch):
+    marked = d.Source("marked", "M", "encyclopaedic", "CC0 1.0", "", "", "", None, None, use="forward_only")
+    plain = d.Source("plain", "P", "chat", "MIT", "", "", "", None, None)
+    rows = []
+    for source in (marked, plain):
+        rows += d.sift(source, [(f"{source.name}-1", f"This is one whole sentence from the {source.name} source.", "en")], lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), collections.Counter())
+    assert [r.get("use") for r in rows] == ["forward_only", None]
+    monkeypatch.setattr(d, "OUT", tmp_path)
+    monkeypatch.setattr(d, "SOURCES", (marked, plain))
+    write(tmp_path / "candidates.jsonl", "".join(json.dumps(r) + "\n" for r in rows))
+    write(tmp_path / "candidates.json", json.dumps({"files": {}, "sources": {"marked": {}, "plain": {}}}))
+    d.mix()
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    written = [json.loads(line) for line in (tmp_path / "sources.jsonl").read_text().splitlines()]
+    assert [r.get("use") for r in written] == ["forward_only", None] and manifest["by_use"] == {"both_directions": 1, "forward_only": 1}
+    assert manifest["sources"]["marked"]["use"] == "forward_only" and manifest["sources"]["plain"]["use"] == "both_directions"
+    assert {s.name for s in d.SOURCES if s.use} == {"marked"}
+
+
+def test_thai_wikipedia_is_forward_only_and_its_paragraphs_are_not_taken():
+    by_name = {s.name: s for s in d.SOURCES}
+    assert by_name["thwiki"].use == "forward_only" and [s.name for s in d.SOURCES if s.use] == ["thwiki"]
+    assert by_name["thwiki_para"].take == by_name["yodas"].take == by_name["lotusdis"].take == 0
