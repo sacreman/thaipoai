@@ -54,7 +54,7 @@ def test_every_weight_updates_including_the_shared_embedding(tmp_path):
 
 
 def test_batches_have_fixed_shapes_and_a_repeatable_order():
-    assert bucket_of(DATA[0]) == 16 and bucket_of(([1] * 200, [1])) is None
+    assert bucket_of(DATA[0]) == 16 and bucket_of(([1] * 200, [1])) == 256 and bucket_of(([1] * 300, [1])) is None
     first = batches_for(DATA * 10, 64, seed=3, epoch=1)
     assert first == batches_for(DATA * 10, 64, seed=3, epoch=1) and first != batches_for(DATA * 10, 64, seed=3, epoch=2)
 
@@ -229,3 +229,26 @@ def test_the_teacher_takes_source_set_rows_shows_context_and_returns_a_marked_pa
     assert "context" not in teacher.request_body("hi", "th", "m", 0.7)["messages"][0]["content"]
     assert teacher.pair_of({**row, "output": "He was born there."}) == {
         "th": row["text"], "en": "He was born there.", "id": "a", "lang": "th", "source": "thwiki", "use": "forward_only", "context": row["context"]}
+
+
+def test_a_distilled_pair_tags_its_machine_side_and_carries_context_on_the_other(tmp_path):
+    text = ["น้ำเย็นมาก ขอบคุณครับ", "Thank you very much", "ไปกินข้าวกันไหม"]
+    train_tokenizer(text * 40, tmp_path / "t.model", 45)
+    tokenizer = Tokenizer(tmp_path / "t.model")
+    en, th, ctx, sep = (tokenizer.marker(m) for m in ("<en>", "<th>", "<ctx>", "<sep>"))
+    pair = {"th": text[0], "en": text[1], "lang": "th", "teacher": "m", "context": text[2]}
+    forward, reversed_ = sorted(train_module.examples_from([pair], tokenizer)[0], key=lambda e: e[0][0] != en)
+    assert forward[0][:2] == [en, ctx] and forward[0].count(ctx) == 2 and sep not in forward[0]  # Thai a person wrote, with the line before
+    assert reversed_[0][:2] == [th, sep] and ctx not in reversed_[0]  # the teacher's English, marked as machine text
+    human = train_module.examples_from([{"th": text[0], "en": text[1]}], tokenizer)[0]
+    assert all(sep not in source and ctx not in source for source, _ in human)
+    long_context = {**pair, "context": " ".join(text * 40)}  # too long to fit: the pair is kept without it
+    assert [ctx in source for source, _ in train_module.examples_from([long_context], tokenizer)[0]] == [False, False]
+
+
+def test_distilled_files_join_the_training_rows_and_cut_off_replies_are_left_out(tmp_path, monkeypatch):
+    results = [{"id": "a", "text": "สวัสดี", "lang": "th", "output": "Hello", "finish": "stop", "teacher": "m"},
+               {"id": "b", "text": "ยาวมาก", "lang": "th", "output": "Very lo", "finish": "length", "teacher": "m"}]
+    (tmp_path / "teacher.jsonl").write_text("".join(json.dumps(r) + "\n" for r in results), encoding="utf8")
+    seen = run_main(tmp_path, monkeypatch, "--distilled", str(tmp_path / "teacher.jsonl"))
+    assert seen["trained"] == [{"th": "สวัสดี", "en": "Hello", "id": "a", "lang": "th", "teacher": "m"}]

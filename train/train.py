@@ -1,6 +1,7 @@
 """Train the translator from random weights.
 
 python -m train.train --config full --sources scb,mtop,massive --out runs/combined-full
+python -m train.train --config baseline --distilled data/distill/teacher.jsonl --out runs/distilled
 Starting again with the same --out resumes from its latest checkpoint.
 """
 
@@ -21,9 +22,10 @@ from mlx.utils import tree_flatten, tree_unflatten
 
 from train.evaluate import Evaluator, average_checkpoints, load_checkpoint, outside_scorer, validation_scorer
 from train.model import CONFIGS, Config, Translator
+from train.teacher import pair_of
 from train.tokenizer import BOS, EOS, PAD, UNK, WORDS, Tokenizer
 
-BUCKETS = (16, 32, 48, 64, 96, 128)  # fixed shapes, because mx.compile retraces on a new shape
+BUCKETS = (16, 32, 48, 64, 96, 128, 192, 256)  # fixed shapes, because mx.compile retraces on a new shape
 
 
 @dataclass(frozen=True)
@@ -44,16 +46,32 @@ class Settings:
 def examples_from(rows, tokenizer, alpha=0.0, seed=""):
     """Each pair teaches both directions, unless it is marked use "forward_only": then only the
     direction that reads the side a person wrote (its lang) and writes the other is taught.
+    A pair a teacher translated (it has a teacher key) has one machine-written side. The direction
+    that reads that side opens with <sep> after the language marker, so the model can tell machine
+    input from a person's. Nothing typed by a user ever carries <sep>.
+    A context line goes between two <ctx> markers in the direction that reads the person's side, and
+    is left out when the example would not fit with it.
     Examples over the longest bucket are dropped and counted.
     With alpha, every text gets a sampled segmentation that the seed fixes."""
-    th, en = tokenizer.marker("<th>"), tokenizer.marker("<en>")
+    to = {"en": tokenizer.marker("<en>"), "th": tokenizer.marker("<th>")}
+    ctx, machine = tokenizer.marker("<ctx>"), tokenizer.marker("<sep>")
     kept, dropped = [], 0
     if alpha:
         sentencepiece.set_random_generator_seed(random.Random(seed).getrandbits(31))
-    all_english, all_thai = tokenizer.encode([r["en"] for r in rows], alpha), tokenizer.encode([r["th"] for r in rows], alpha)
-    for row, english, thai in zip(rows, all_english, all_thai):
-        directions = {"en": ([th, *english, EOS], thai), "th": ([en, *thai, EOS], english)}  # keyed by the language read
-        for example in ([directions[row["lang"]]] if row.get("use") == "forward_only" else directions.values()):
+    pieces = {side: tokenizer.encode([r[side] for r in rows], alpha) for side in ("en", "th")}
+    contexts = iter(tokenizer.encode([r["context"] for r in rows if r.get("context")], alpha))
+    for i, row in enumerate(rows):
+        context = next(contexts) if row.get("context") else None
+        for read, write in (("en", "th"), ("th", "en")):
+            person = row.get("lang", read) == read  # this direction reads the side a person wrote
+            if not person and row.get("use") == "forward_only":
+                continue
+            source, target = pieces[read][i], pieces[write][i]
+            tag = [machine] if not person and "teacher" in row else []
+            example = ([to[write], *tag, *source, EOS], target)
+            with_context = ([to[write], ctx, *context, ctx, *source, EOS], target) if context and person and "lang" in row else None
+            if with_context and bucket_of(with_context):
+                example = with_context
             if bucket_of(example) is None:
                 dropped += 1
             else:
@@ -219,17 +237,18 @@ class Trainer:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", choices=CONFIGS, required=True)
-    parser.add_argument("--sources", required=True, help="comma-separated: scb,mtop,massive")
+    parser.add_argument("--sources", default="", help="comma-separated: scb,mtop,massive")
+    parser.add_argument("--distilled", default="", help="comma-separated files of teacher output from train.teacher")
     parser.add_argument("--out", required=True)
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--exclude-subsets", default="", help="comma-separated subsets to leave out of training")
     parser.add_argument("--max-steps", type=int, help="stop early, for benchmarks")
-    # Defaults suit a corpus of a few hundred thousand pairs. Lower dropout and sampling for millions.
-    parser.add_argument("--dropout", type=float, default=0.3)
-    parser.add_argument("--label-smoothing", type=float, default=0.2)
-    parser.add_argument("--word-dropout", type=float, default=0.1, help="share of pieces replaced with the unknown piece")
-    parser.add_argument("--sampling-alpha", type=float, default=0.2, help="resegment the corpus each epoch, 0 to turn off")
+    # Plain defaults. Dropout 0.3, label smoothing 0.2, word dropout 0.1 and sampling 0.2 together scored lower on every test.
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument("--word-dropout", type=float, default=0.0, help="share of pieces replaced with the unknown piece")
+    parser.add_argument("--sampling-alpha", type=float, default=0.0, help="resegment the corpus each epoch, for example 0.2; 0 is off")
     parser.add_argument("--batch-tokens", type=int, default=2048)
     parser.add_argument("--r-drop", type=float, default=0.0, help="weight of the R-Drop penalty, 0 for off. Doubles the work per step")
     args = parser.parse_args()
@@ -238,6 +257,10 @@ def main():
     rows = [json.loads(line) for line in Path("data/public/corpus/train.jsonl").read_text(encoding="utf8").splitlines()]
     excluded = set(filter(None, args.exclude_subsets.split(",")))
     rows = [r for r in rows if r["source"] in wanted and r["subset"] not in excluded]
+    # ponytail: every pair is held in memory and re-encoded each epoch; stream from disk in shards when the distilled set outgrows RAM
+    for path in filter(None, args.distilled.split(",")):
+        results = (json.loads(line) for line in Path(path).read_text(encoding="utf8").splitlines() if line.strip())
+        rows += [pair_of(r) for r in results if r.get("finish", "stop") == "stop"]  # a reply cut at the token limit is not a translation
     tokenizer = Tokenizer()
 
     def epoch_examples(epoch):

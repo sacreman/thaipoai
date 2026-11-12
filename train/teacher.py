@@ -37,7 +37,7 @@ def target_of(row):
 def pair_of(result):
     """A translated source-set row as a training pair, keeping what the trainer reads."""
     pair = {result["lang"]: result["text"], target_of(result): result["output"]}
-    return {**pair, **{k: result[k] for k in ("id", "lang", "source", "use", "context") if k in result}}
+    return {**pair, **{k: result[k] for k in ("id", "lang", "source", "use", "context", "teacher") if k in result}}
 
 
 def translate(row, endpoint, key, model, temperature, attempts=4):

@@ -21,7 +21,7 @@ class Config:
     feed_forward: int
     layers: int
     dropout: float = 0.1
-    max_length: int = 128
+    max_length: int = 256  # the trainer's longest bucket
 
 
 CONFIGS = {

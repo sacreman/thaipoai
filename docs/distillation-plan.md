@@ -84,10 +84,14 @@ model, not a translation corpus.
   kept apart so that the set can be built without it in one step, and whether it stays is decided
   before any release.
 
-Out of both tiers: a source with an explicit term against this use (non-commercial, no-derivatives,
+Out of both tiers: a dataset whose own licence forbids this use (non-commercial, no-derivatives,
 no-training), a source behind an access agreement, and the output of any model whose terms forbid
 training on it. Each licence is read on the source's own page and recorded with an attribution line in
 the manifest.
+
+The web-crawl text is in tier 2 on the strength of the collection's licence, which covers the
+packaging and not the pages. The terms of the individual sites have not been cleared. Tier 2 is for
+experiments, and none of it is released before that is settled.
 
 **Where the Thai stands on 12 November.** 899.7 million Thai words have been collected that pass the
 local rules. About 684 million of them are counted clean, at the shares measured on judged samples.
@@ -271,9 +275,11 @@ the billion words are collected.
 - **Record:** model name as served, prompt, settings and date go in the release, with the translated
   rows. The teacher is not deterministic, so a rebuild reproduces the source sentences, not the
   translations.
-- **Trainer.** `train/train.py` already teaches a `forward_only` pair in one direction. It does not
-  yet read the distilled pairs, mark reversed pairs or read context. Long rows exceed its present
-  limit of 128 pieces a side: the limit will be raised, or the rows split at training time.
+- **Trainer.** `train/train.py` reads the teacher's output (`--distilled`), teaches a `forward_only`
+  pair in one direction, opens a reversed pair's source with `<sep>` so machine-written input is
+  marked, and puts a context line between two `<ctx>` markers. A side may be up to 256 pieces. None
+  of this has been run on distilled pairs yet, because none exist. All pairs are held in memory,
+  which will not hold for the full set.
 - **Scoring** is still the project's own chrF with greedy decoding. Moving to sacreBLEU chrF and
   chrF++ with signatures, and to beam search, is an open item.
 
@@ -349,7 +355,6 @@ tier 1 only.
 - Whether tier 2 text stays in a release, and under what terms the rest is then published.
 - Where enough conversational Thai comes from.
 - Which filter thresholds to reduce at, once the crawl is scored and the improved prose filter is trained.
-- Whether to raise the trainer's 128-piece limit or split long rows at training time.
 - Moving scoring to sacreBLEU chrF and chrF++ with signatures, and to beam search.
 - Who gives the human judgement of conversational Thai that the chat test set, the blind ranking and
   the reward all need.

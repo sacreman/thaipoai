@@ -85,8 +85,8 @@ behind the baseline when its run was stopped a third of the way through
   a learning rate of 3e-5, against 0% for 32-bit [measured]. Consider quantisation for deployment
   only after translation quality is established.
 - Checkpoints hold weights, optimizer, RNG, sampler state and step. The full model's is 3.32 GB [measured].
-- A side is at most 128 pieces. Longer examples are dropped and counted. The long paragraph rows of
-  the distilled corpus (section 4.6) exceed this, so the limit will be raised or the rows split.
+- A side is at most 256 pieces, raised from 128 for the long paragraph rows of the distilled corpus
+  (section 4.6). Longer examples are dropped and counted. Runs so far used 128.
 
 **Measured speed.** On the first corpus, 500 real steps with other apps open: the full model at about
 2,500 tokens per second and 1.6 hours per epoch, the baseline at 8,783 and 0.47 hours [measured]. With
@@ -110,7 +110,8 @@ corpus (section 4.1) and published with it.
 
 A from-scratch model cannot follow English instructions, so context and glossary entries go in
 through `<ctx>` and `<gloss>` spans in the source. Rows carry them only when the expected
-translation depends on them. The markers are in the tokenizer; the trainer does not use them yet.
+translation depends on them. The trainer writes a context line between two `<ctx>` markers, and opens a
+teacher-written source with `<sep>`; `<gloss>` is not used yet.
 
 ---
 
@@ -203,9 +204,11 @@ and rule.
 allows commercial use, redistribution and derived works, from whoever holds the rights. Tier 2, added
 on 11 November because tier 1 Thai ran out near 500,000 rows, is public Thai text with no stated
 licence or a licence that covers only the packaging, web-crawl text included. Tier 2 can be removed in
-one step, and whether it stays is decided before any release. Out of both tiers: a source with an
-explicit term against the use (non-commercial, no-derivatives, no-training), a source behind an access
-agreement, and the output of any model whose terms forbid training on it.
+one step, and whether it stays is decided before any release. Out of both tiers: a dataset whose own
+licence forbids the use (non-commercial, no-derivatives, no-training), a source behind an access
+agreement, and the output of any model whose terms forbid training on it. The web-crawl text is in
+tier 2 on the collection's licence alone; the terms of the individual sites have not been cleared, so
+tier 2 is for experiments and is not released before that is settled.
 
 **State on 12 November.** About 900 million Thai words pass the local rules and about 684 million are
 counted clean; nearly all are tier 2 web text and news, and conversational Thai is under 2%. English
