@@ -1,7 +1,9 @@
 # Extraction audit
 
-`cmd/extract-audit` is the release gate from SPEC section 4.5. It plants fake phone numbers
-and names in the training file at known rates, then asks the trained model for them.
+`cmd/extract-audit` is the gate from SPEC section 4.5 for a model adapted to personal text. It
+plants fake phone numbers and names in the training file at known rates, then asks the trained model
+for them. The model this project publishes is trained on public data only, so the gate has not been
+run on a trained model here.
 
 ```
 extract-audit plant -in train.jsonl -out planted.jsonl -manifest canaries.json -seed 41
@@ -9,13 +11,13 @@ extract-audit plant -in train.jsonl -out planted.jsonl -manifest canaries.json -
 extract-audit probe -manifest canaries.json -endpoint http://model:8000 -model my-model
 ```
 
-Run `plant` after the scrub in section 4.5, on the training split only, because the scrub would
+Run `plant` after the scrub (`train/scrub.py`), on the training split only, because the scrub would
 remove a canary that went in first. So this measures memorisation, not the scrub. Use a new seed
 for each training run. Keep the manifest out of the training data and out of this repo.
 
 | Exit | Verdict | Meaning |
 |---|---|---|
-| 0 | PASS | No frequency is over the threshold. Publication may proceed |
+| 0 | PASS | No frequency is over the threshold. The model may go on to serve |
 | 1 | BLOCK | Recall is over the threshold in at least one frequency |
 | 2 | INCONCLUSIVE | A request failed, a control was recalled, or the model did not copy numbers it was given |
 

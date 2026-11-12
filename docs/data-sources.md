@@ -2,6 +2,14 @@
 
 How the training data for the from-scratch model was chosen. Researched 9 November 2026. Not legal advice.
 
+**Status, 12 November 2026.** This is the research behind the first, human-translated corpus, and it
+is kept as written. Two things have changed since. The route to more data is no longer the mined
+parallel text weighed here (HPLT pairs, OpenSubtitles pairs): it is text in one language translated by
+a teacher model, planned in [distillation-plan.md](distillation-plan.md). And ALT, TALPCo and Tatoeba
+(section 2) are not training data: 900 of their pairs are the "unfamiliar text" test that runs are
+scored on. The file they sit in, `data/public/train.jsonl`, is not built by any script in this
+repository.
+
 Labels used below: **[sourced]** read on the cited page. **[estimate]** our own number or inference.
 
 ## 1. Bottom line
@@ -99,7 +107,7 @@ https://catalog.ldc.upenn.edu/LDC2023T08, README https://catalog.ldc.upenn.edu/d
 - Verdict: excluded. Small, news-heavy, restricted. ToEng 124k words is the only genuinely Thai-origin human set found, but too small and restricted.
 
 ### FLORES+
-https://huggingface.co/datasets/openlanguagedata/flores_plus Thai listed (`tha`). dev 997, devtest 1,012 sentences per language. CC BY-SA 4.0. Gated: login and accept terms; do not redistribute publicly unless protected from scraping. Card states it "should not be used as training data". Blind test set is not in this repository. Fine as a held-out benchmark. Keep it out of every training source; check overlap by hash since crawl data could contain it [estimate].
+https://huggingface.co/datasets/openlanguagedata/flores_plus Thai listed (`tha`). dev 997, devtest 1,012 sentences per language. CC BY-SA 4.0. Gated: login and accept terms; do not redistribute publicly unless protected from scraping. Card states it "should not be used as training data". Blind test set is not in this repository. Fine as a held-out benchmark. In practice the project scores on FLORES-200 devtest, which holds the same 1,012 sentences before later corrections and is not access-controlled; FLORES+ has not been used. Keep it out of every training source; check overlap by hash since crawl data could contain it [estimate].
 
 ### Other
 - **quickmt-train.th-en** https://huggingface.co/datasets/quickmt/quickmt-train.th-en: 26,934,996 rows, deduplicated aggregate via mtdata from CCAligned, TED, ELRC, OPUS collections, HPLT v2, OpenSubtitles (2016, 2018, 2024), QED, SCB, TED2020, Tanzil, Tatoeba, Bible, WMT24++ Thai and others. No licence stated. Contains the non-commercial TED and research-only QED data, and WMT24++ which would contaminate that benchmark. Useful as a size reference only.
@@ -161,7 +169,9 @@ Shortfall: clean human set 495k is 2% of 26.9M. Core mix 2.8M is 10%. With subti
 The first mix favours pairs with documented human review over volume: SCB's professional subsets, MTOP
 Thai, and filtered MASSIVE Thai, 298,930 training pairs in all. `SPEC.md` section 4.1 has the counts,
 filters and audit. MTOP is CC BY-SA 4.0 and MASSIVE is CC BY 4.0, both read from their licence files.
-ALT, TALPCo, Tatoeba and the crawled sources stay out until a run shows more data helps.
+ALT, TALPCo and Tatoeba stay out of training and serve as a test of unfamiliar text. The mined
+parallel sources (HPLT, OpenSubtitles pairs, CCAligned) are not used. The first runs showed that the
+gap is coverage (`docs/steps/05-first-training-runs.md`), and the distilled corpus is the answer to it.
 
 ## 8. Commissioned review and translation prices
 

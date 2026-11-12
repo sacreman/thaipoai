@@ -54,7 +54,10 @@ What it showed:
 
 ## 2. Desk research on base models
 
-Three research reports read published papers and licences. Nothing here was tested by us.
+Three research reports read published papers and licences. Nothing here was tested by us. This is
+the reading of 8 November. One later correction: Typhoon Translate 1.5, the 4B translator the project
+now compares itself with, is built on Qwen3 and is Apache-2.0, so the Typhoon line below does not
+describe it.
 
 - **Translation labels did not predict Thai.** At WMT26 English to Thai, Tower+ 9B scored 20.4, unmodified Gemma 4 E4B 62.4 and Lumen 84.0.
 - **Out on licence:** HY-MT1.5-7B and Hunyuan-MT-7B (regional exclusions), Aya and EXAONE (non-commercial), Llama and GLM-4 (forced naming on fine-tunes), Typhoon (unresolved terms on fine-tuning).
@@ -196,9 +199,9 @@ Built for these models on 9 November, alongside sections 6 to 10. It ran on the 
 | Piece | What it does | How far it got |
 |---|---|---|
 | `cmd/gateway` | `POST /v1/translate`, guards, one repair, logs no text | Four real requests against Gemma 4 E4B on the Mac. No load test |
-| `cmd/adapter-sync` | Sidecar: downloads, verifies sha256, loads, tests each adapter | Ran on kind with one real model replica. 15 Go tests |
+| `cmd/adapter-sync` (since removed) | Sidecar: downloads, verifies sha256, loads, tests each adapter | Ran on kind with one real model replica. 15 Go tests |
 | `cmd/rollout-controller` | Verifying, Golden, Shadow, Canary, then Promoted, Blocked, RolledBack or Inconclusive | Fault matrix passed 19 of 19 checks on kind, with a fake model |
-| `cmd/reaper`, Terraform, GitHub workflow | Temporary GPU pipeline | 17 Go tests against fakes. **Never run against a cloud** |
+| `cmd/reaper`, Terraform, GitHub workflow (since removed) | Temporary GPU pipeline | 17 Go tests against fakes. **Never run against a cloud** |
 | `cmd/extract-audit` | Planted-canary memorisation gate | Written. No report of a run against a trained adapter |
 
 **Guards do not protect meaning.** Run over 1,320 saved translations already scored by Opus, of which 129 were misleading. The repairing guards fired on 48 (3.6%), and only 5 of the 129 were among them. `negation` fired 29 times with 6 misleading, so it reports only.

@@ -7,7 +7,11 @@ used.
 
 ## The 75M baseline: which data helps
 
-Four runs of the baseline model, eight epochs each, with the settings in `train/train.py`.
+Four runs of the baseline model, eight epochs each, with the settings `train/train.py` had at the
+time: dropout 0.1, label smoothing 0.1, no word dropout and no sampled segmentation. Its defaults have
+since changed to a low-resource recipe (dropout 0.3, label smoothing 0.2, word dropout 0.1, sampled
+segmentation), which scored lower: 43.22 against 44.68 on these rows
+([distillation plan](../distillation-plan.md), section 1).
 
 | Run | Training pairs | Best chrF | English to Thai | Thai to English | SCB task dialogs | MTOP | MASSIVE |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -73,7 +77,9 @@ about 1,000.
 
 ## Limits
 
-chrF counts shared characters, not meaning, and DeepSeek was not scored on the validation rows, so chrF
-cannot compare the two systems. Only the runs without reviews were repeated with a second seed. The
+chrF counts shared characters, not meaning. When this was written DeepSeek had not been scored on the
+validation rows. It was on 10 November: 46.72 on the same 2,000 rows against the 75M model's 44.68,
+and 61.50 against 36.16 on 900 pairs of unfamiliar text
+([distillation plan](../distillation-plan.md), section 1). Only the runs without reviews were repeated with a second seed. The
 pilot was judged by one automatic judge on 120 cases, not by the blind bilingual review in the spec.
 Results, checkpoints and logs are in `runs/`, which is not published.

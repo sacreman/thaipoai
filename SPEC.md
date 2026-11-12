@@ -1,6 +1,6 @@
 # ThaiPoAI: a Thai-English translator trained from scratch
 
-Version 8.2, 10 November 2026. Personal open-source project by Steven Acreman.
+Version 8.3, 12 November 2026. Personal open-source project by Steven Acreman.
 Public repository `sacreman/thaipoai`. Code is Apache-2.0. The weights' licence follows the
 training data (section 4.4).
 
@@ -17,11 +17,26 @@ Evidence labels: **[measured]** run on our hardware, **[estimate]** arithmetic o
 ThaiPo is a production English-Thai chat translator. It uses a hosted DeepSeek pipeline with a
 glossary, scoring and corrections.
 
-**What can a roughly 300-million-parameter model, trained from random initialisation on an M4 Max
+**What can a model of under 300 million parameters, trained from random initialisation on an M4 Max
 laptop, achieve against that system, and where does it fall short?**
 
 This is an experiment in learning and in practical quality. We do not assume it will beat DeepSeek.
 A clear measurement of the gap counts as success.
+
+### The outcome aimed for
+
+Restated on 11 November 2026: the best translator for informal one-to-one chat between Thai and
+English in a model under 300 million parameters. The proof is Thai speakers preferring its output,
+blind, to DeepSeek's, Typhoon Translate's and Google's on chat messages none of them has seen
+(section 5). FLORES-200 is a secondary line: match or beat Typhoon Translate 1.5.
+
+On general text a model trained on DeepSeek's translations is expected to end below DeepSeek. A
+review on 11 November estimated 46 to 55 chrF on FLORES-200 for such a model, against the teacher's
+59 and 64. The wins looked for are per size and on chat.
+
+Measured so far, chrF on FLORES-200 devtest with the project's own script, English to Thai and Thai to
+English: DeepSeek Flash 59.08 and 63.81; Typhoon Translate 1.5 (4B) 54.22 and 52.46; this project's
+75M model on the human-translated data about 26 and 30 [measured].
 
 ### What "good" means
 
@@ -34,7 +49,8 @@ keeps the ambiguity instead of inventing facts.
 ## 2. Deliverables
 
 1. A reproducible MLX training pipeline.
-2. Documented dataset selection (`docs/data-sources.md`).
+2. Documented dataset selection (`docs/data-sources.md`, `docs/distillation-plan.md`,
+   `docs/distillation-sources.md`).
 3. A tokenizer.
 4. Model checkpoints.
 5. An honest comparison with the existing system, per direction.
@@ -51,12 +67,16 @@ weights included.
 |---|---|---|---|---|---|
 | **full** | 9/9 | 1024 | 16 | 4096 | 297,197,568 |
 | baseline | 8/8 | 512 | 8 | 2048 | 75,188,224 |
+| probe | 6/6 | 256 | 4 | 1024 | about 19 million |
 
-Counts are from instantiated models at a vocabulary of 32,000 [measured]. Both share one matrix for
-the source embedding, target embedding and output projection, and that matrix is fully trained.
+Counts are from instantiated models at a vocabulary of 32,000 [measured]. All share one matrix for
+the source embedding, target embedding and output projection, and that matrix is fully trained. The
+probe is for quick comparisons only.
 
 **Size risk.** The first corpus is about 300,000 pairs, far below what a model of this size usually
-needs, so the baseline trains on the same data for comparison.
+needs, so the baseline trains on the same data for comparison. On that corpus the full model was
+behind the baseline when its run was stopped a third of the way through
+(`docs/steps/05-first-training-runs.md`).
 
 **Implementation.**
 - Hand-written layers. `nn.Transformer` has no decode cache, embeddings or positions.
@@ -64,7 +84,9 @@ needs, so the baseline trains on the same data for comparison.
 - Train in 32-bit float. 16-bit halved memory but left 43.9% of weights unchanged after 10 steps at
   a learning rate of 3e-5, against 0% for 32-bit [measured]. Consider quantisation for deployment
   only after translation quality is established.
-- Checkpoints hold weights, optimizer, RNG, sampler state and step. Config A is 3.32 GB [measured].
+- Checkpoints hold weights, optimizer, RNG, sampler state and step. The full model's is 3.32 GB [measured].
+- A side is at most 128 pieces. Longer examples are dropped and counted. The long paragraph rows of
+  the distilled corpus (section 4.6) exceed this, so the limit will be raised or the rows split.
 
 **Measured speed.** On the first corpus, 500 real steps with other apps open: the full model at about
 2,500 tokens per second and 1.6 hours per epoch, the baseline at 8,783 and 0.47 hours [measured]. With
@@ -74,7 +96,8 @@ model and 4 for the baseline [estimate]. Runs lasted minutes, so sustained speed
 
 ### Tokenizer
 
-One joint SentencePiece unigram model at 32,000 pieces, retrained on the full corpus.
+One joint SentencePiece unigram model at 32,000 pieces, trained on the training split of the first
+corpus (section 4.1) and published with it.
 - `normalization_rule_name=identity` plus our own NFC. The default `nmt_nfkc` broke sara am: only
   54.9% of Thai round-tripped, against 100% with `identity` [measured]. Piece counts do not reveal
   this, so a test checks the round trip.
@@ -87,7 +110,7 @@ One joint SentencePiece unigram model at 32,000 pieces, retrained on the full co
 
 A from-scratch model cannot follow English instructions, so context and glossary entries go in
 through `<ctx>` and `<gloss>` spans in the source. Rows carry them only when the expected
-translation depends on them.
+translation depends on them. The markers are in the tokenizer; the trainer does not use them yet.
 
 ---
 
@@ -148,7 +171,9 @@ and about half that for review.
 ### 4.4 Weights licence
 
 ShareAlike on model weights is legally unsettled. If SCB is in, CC BY-SA on the weights is the
-safest option. A licence on the weights cannot fix unknown source rights.
+safest option. A licence on the weights cannot fix unknown source rights. The tier 2 text of the
+distilled corpus (section 4.6) has such rights, so whether it stays is decided before any release of
+that corpus or of weights trained on it.
 
 ### 4.5 App data
 
@@ -168,16 +193,29 @@ placeholders first, and pass `cmd/extract-audit` before the model serves anyone.
 ### 4.6 Distilled corpus
 
 The human-translated mix covers commands, reviews and task dialogue, and a model trained on it is 25
-to 33 chrF behind the teacher on anything else (measured 10 November). A second corpus closes that
-gap: English and Thai sentences from openly licensed sources, cleaned, translated once by DeepSeek
-Flash, and published as a versioned release with the model name, prompt, settings and date.
-[`docs/distillation-plan.md`](docs/distillation-plan.md) holds the plan: the source rule, the audit of
-every source, the cleaning rules, how the rows are bought and filtered, and what other work shows.
+to 33 chrF behind the teacher on anything else (measured 10 November). A second corpus is meant to
+close that gap: a billion clean words of English and Thai text in one language, cleaned, then
+translated once by DeepSeek Flash. [`docs/distillation-plan.md`](docs/distillation-plan.md) holds the
+plan and [`docs/distillation-sources.md`](docs/distillation-sources.md) the record of every source
+and rule.
 
-The source rule is the one in section 4.2, applied to the text itself: the licence must allow
-commercial use, redistribution and derived works, and must come from whoever holds the rights. Web
-crawls and scraped collections stay out. A teacher is used only where its terms allow training on its
-output.
+**Sources are in two licence tiers, and every row carries its tier.** Tier 1 has a licence that
+allows commercial use, redistribution and derived works, from whoever holds the rights. Tier 2, added
+on 11 November because tier 1 Thai ran out near 500,000 rows, is public Thai text with no stated
+licence or a licence that covers only the packaging, web-crawl text included. Tier 2 can be removed in
+one step, and whether it stays is decided before any release. Out of both tiers: a source with an
+explicit term against the use (non-commercial, no-derivatives, no-training), a source behind an access
+agreement, and the output of any model whose terms forbid training on it.
+
+**State on 12 November.** About 900 million Thai words pass the local rules and about 684 million are
+counted clean; nearly all are tier 2 web text and news, and conversational Thai is under 2%. English
+stands at roughly 54 million words from tier 1 sources and is collected after the Thai. Rows are
+cleaned by rules and then scored by small local filters. Nothing has been translated: no paid AI use
+is allowed until the billion words are collected, and a priced pilot of 1,000 rows comes first.
+
+**Not yet reproducible.** The reduced set of 11 November was rebuilt byte for byte from pinned
+downloads. The crawl collection, the filter scores and the filters themselves are newer, are not all
+in this repository, and cannot yet be rebuilt from it. No workflow builds this corpus.
 
 ## 5. Evaluation
 
@@ -188,11 +226,17 @@ Build the evaluation sets first, and keep them out of training.
 | `suites/dev`, `dev2`, `confirm` | Held-out final tests. Synthetic |
 | `suites/pilot` | Checkpoint tracking during training |
 | `suites/golden` | Must-pass cases for the rollout gate |
-| FLORES+ | Public benchmark |
-| Commissioned Thai-written chat | Held-out conversational test (section 4.3) |
+| FLORES-200 devtest | Public benchmark, 1,012 sentences. Never trained on. FLORES+ is access-controlled and holds the same sentences with later corrections; it has not been used |
+| Chat test set, to be made | 500 to 1,000 messages each way, human-translated, never published or trained on. The proof of section 1, with a blind ranking by Thai speakers (see also section 4.3) |
 
 Training data never contains a suite message: every row whose normalised source appears in any
 suite is dropped when the corpus is built. A few short public sentences match today.
+
+Two limits on the suites. DeepSeek drafted every case, and DeepSeek is also the teacher and a system
+under comparison, which may favour it and its student. And dev, dev2 and confirm were used to choose
+among pretrained models earlier (`docs/pretrained-experiments.md`), and the kind cluster replays
+confirm as its shadow corpus, so they are unseen by this model but not untouched. The chat test set
+is the one that settles the claim.
 
 **Baseline.** The existing DeepSeek system with its glossary and available context. Both systems
 receive equivalent relevant information. `evaluation/run_baseline.sh` is only a stand-in, with no
@@ -204,8 +248,10 @@ translation latency (p50 and p95 for encoder, first token and per token, at beam
 training time and operating cost.
 
 **Scoring.**
-- Blind bilingual human review.
-- chrF as the repeatable automatic metric.
+- Blind bilingual human review. None has been done yet.
+- chrF as the repeatable automatic metric. Today it is the project's own implementation with greedy
+  decoding (`train/evaluate.py`). Moving to sacreBLEU chrF and chrF++ with signatures, and to beam
+  search, is an open item. Until then, scores here should not be set beside published ones.
 - Jev's three-vote majority for meaning (`evaluation/compare_systems.py`), paired on discordant cases
   with a one-sided 95% upper bound.
 
@@ -231,10 +277,14 @@ A step is done when it **runs for real, has a test that fails if it breaks, has 
 4. Benchmark the laptop: several hundred representative steps, measuring GPU use, memory and
    sustained throughput, before estimating a full run. Measured, awaiting approval.
 5. Train on selected public data. Evaluate checkpoints regularly and use measured progress to decide
-   whether more training is worth it. The human-translated mix is trained; the distilled corpus
-   (section 4.6) is being built, and is bought in steps that continue only while the score climbs.
+   whether more training is worth it. The human-translated mix is trained. For the distilled corpus
+   (section 4.6) the order is: collect and filter the Thai; collect English to 30 to 40% of the
+   total; a priced 1,000-row pilot; distil in steps, training and scoring after each; then training
+   that can pass the teacher on chat (the best of several teacher outputs per row, human-translated
+   chat pairs weighted at the end, and reinforcement learning with a reward from human judgement).
 6. Removed. Adapting to application data is outside this project (section 4.5).
-7. Compare against the production system, each direction separately.
+7. Compare against the production system, each direction separately, and run the blind ranking of
+   section 1 on the chat test set.
 
 ---
 
@@ -281,7 +331,7 @@ without human review.
 cmd/{gateway,rollout-controller,fake-model,suite,extract-audit}
 internal/{guards,llm,rollout}  deploy/{crd.yaml,Dockerfile,kind}
 train/  evaluation/  suites/  data/{synthetic-chat-v1/,massive-th-verified.json}  tests/
-docs/{pretrained-experiments.md,data-sources.md,distillation-plan.md,rollout-states.md,extract-audit.md,steps/}
+docs/{pretrained-experiments.md,data-sources.md,distillation-plan.md,distillation-sources.md,rollout-states.md,extract-audit.md,steps/}
 ```
 
 ## Sources
