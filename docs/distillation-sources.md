@@ -722,11 +722,13 @@ and hashes. Open items:
    them. They come from filters trained and run apart, and are packaged by
    `python -m train.release selection`; the workflow does not make them again. It checks `selection.tgz`
    against the sha256 above, which is written in the workflow file; the archive is in `build-inputs-v1`.
-5. **Confirm on Linux.** The build has only run on macOS (Apple silicon), and the times above are from that
-   machine. The hosted runner's cores are slower.
-6. **Disk in the last job.** The merged build is 11 GB, `sources.jsonl` 3.5 GB, the extracted score files
-   5.3 GB and the selected rows 4.1 GB, about 24 GB together and more than a hosted runner's 14 GB. The
-   job first removes toolchains it does not use from the runner, and decrypts one archive at a time.
+5. **Linux.** The workflow ran through on hosted runners on 19 November 2026: all 50 slices matched
+   `train/crawl_build.json` and the selection matched `train/selected_build.json`. A build job took 1 to 61
+   minutes, the pool job 132 and the last job 40; the run took 2 hours 52 minutes with six build jobs at a
+   time.
+6. **Disk.** The last job holds the merged build (11 GB), `sources.jsonl` (3.5 GB), the extracted score files
+   (5.3 GB) and the selected rows (4.1 GB). It first removes toolchains it does not use from the runner and
+   decrypts one archive at a time; it ended with 83 GB free.
 
 ### Determinism
 
