@@ -1,0 +1,252 @@
+{
+ "blognone_p/all": {
+  "rows": 38412,
+  "words": 1671615,
+  "sha256": "dbeae578e5fd9492ba3ddc4753841d444acb65b0946b980490787a412f650c45"
+ },
+ "court_p/all": {
+  "rows": 163553,
+  "words": 10759707,
+  "sha256": "421278b5e9178723bb420ce540aa0696aa512cd579633982a8ed96966d068e80"
+ },
+ "fineweb2_th/000_00000": {
+  "rows": 1015381,
+  "words": 59921139,
+  "sha256": "2e72def8275d328aebbed943f586993380f77c546c1130eebd6c6a5f1674eca6"
+ },
+ "fineweb2_th/000_00001": {
+  "rows": 1013778,
+  "words": 59951213,
+  "sha256": "245a3885339e1a34838a1911a06b39f69ad78ad2260a3e97ce6c1b6e289567ae"
+ },
+ "fineweb2_th/000_00002": {
+  "rows": 1010358,
+  "words": 59565672,
+  "sha256": "39dce51e6569ca6dcf56667eed40dda735f315a28a05801aa81cc15b7a2a0284"
+ },
+ "fineweb2_th/001_00000": {
+  "rows": 1001222,
+  "words": 58326790,
+  "sha256": "b2f4198568c0bed7580cf48259debda95f11cd1ff05b557259dcd91aa7577eba"
+ },
+ "fineweb2_th/001_00001": {
+  "rows": 996135,
+  "words": 58056907,
+  "sha256": "028e797c829242b8595933b6757878a737baa4fceaef21d69a0a21510920ae46"
+ },
+ "fineweb2_th/001_00002": {
+  "rows": 999217,
+  "words": 58117211,
+  "sha256": "244edf7ff226138a754e22ca86c391847232a6408884880ca8021e7b45520c91"
+ },
+ "fineweb2_th/002_00000": {
+  "rows": 973778,
+  "words": 55767881,
+  "sha256": "c26a8c035def28f039bdde77f2901716ef5606adf4daea7857d7e889c32b0c58"
+ },
+ "fineweb2_th/002_00001": {
+  "rows": 974890,
+  "words": 55795574,
+  "sha256": "6fb263cae995850128040112758d65643b504effce7e82fd5080f7a9ff68c0eb"
+ },
+ "fineweb2_th/002_00002": {
+  "rows": 971308,
+  "words": 55666867,
+  "sha256": "ce9d00cfb22b9b1ab36b37ee2db029d3b8284f6346d403a1b5cc9fdbb017e2cc"
+ },
+ "fineweb2_th/003_00000": {
+  "rows": 947434,
+  "words": 53571923,
+  "sha256": "83fe9c2bb98d0c2c4b199c35f6f6ea38a13303f9b484dba4456a635ad2dd762f"
+ },
+ "fineweb2_th/003_00001": {
+  "rows": 946126,
+  "words": 53352576,
+  "sha256": "9b1db2a33a9ca71ae9beefcd5dabc959f7ee17169ac5edd8a5de2a7698e94cb0"
+ },
+ "fineweb2_th/003_00002": {
+  "rows": 951124,
+  "words": 53701861,
+  "sha256": "9a2482dc7055bbd8ef4f3e14c23fe61625d43f37f844f83453eceeecb7b95a9a"
+ },
+ "fineweb2_th/004_00000": {
+  "rows": 957797,
+  "words": 52847407,
+  "sha256": "99caabffd572afcf58cd655221b4704a2018db2becb2dfa0950348a690304540"
+ },
+ "fineweb2_th/004_00001": {
+  "rows": 963240,
+  "words": 53120991,
+  "sha256": "0df49cb42b9fe115280602de102b96d3c4ed242cfb97741d6d37fde65f91d20e"
+ },
+ "fineweb2_th/004_00002": {
+  "rows": 961143,
+  "words": 53038229,
+  "sha256": "a5e892fb95b1721c7be90fefd08cc10bbb7fc70f70441c561577f322651e4936"
+ },
+ "fineweb2_th/005_00000": {
+  "rows": 182581,
+  "words": 9900073,
+  "sha256": "63aaa2e6bd8d27ca96940d6747899b41a1cf50955742b5ab24257d0ef817d33d"
+ },
+ "fineweb2_th/005_00001": {
+  "rows": 165265,
+  "words": 8953092,
+  "sha256": "d0a60c671f14ed1f80270a3161c7eff30feed15983c7180aa141ade342cdd906"
+ },
+ "fineweb2_th/005_00002": {
+  "rows": 147836,
+  "words": 8010841,
+  "sha256": "fe9a58b04b8d1052e922bcb8bc638e79737f50694590da4abf663144d5fc4488"
+ },
+ "forum2_th/000_00000": {
+  "rows": 243039,
+  "words": 7696761,
+  "sha256": "11d012a0c5faf36775db43f51bef04e28972ed77557466a5c303701f2bce15cb"
+ },
+ "forum2_th/000_00001": {
+  "rows": 244253,
+  "words": 7675852,
+  "sha256": "8a7b2538a582434a886a6a672bda753e5be59af55cbaed3d9f484263c8da7fc1"
+ },
+ "forum2_th/000_00002": {
+  "rows": 244588,
+  "words": 7710370,
+  "sha256": "e98840b7d11fbb52e71dcbd94de7606a7b5cbf0d772d3b5e22bfac0414a3b8b6"
+ },
+ "forum2_th/001_00000": {
+  "rows": 302850,
+  "words": 9528120,
+  "sha256": "fc6604537996239c3188182392c89c5e11b01dfe422a0d1c18470da4088e26f3"
+ },
+ "forum2_th/001_00001": {
+  "rows": 291740,
+  "words": 9169438,
+  "sha256": "70887e7d7366979039a1524bcf966a9437f39768b80203c421b852b827716146"
+ },
+ "forum2_th/001_00002": {
+  "rows": 295666,
+  "words": 9327304,
+  "sha256": "3f97e8f1457a46c148c3f7c3f317c885251131f4a1c096f6ed6d6076279e04bf"
+ },
+ "forum2_th/002_00000": {
+  "rows": 358653,
+  "words": 11195088,
+  "sha256": "dcbc79ff8f4d27a78ec280b82387de1738aaf41e37c65bd340539d3a6ebdd596"
+ },
+ "forum2_th/002_00001": {
+  "rows": 354790,
+  "words": 11084999,
+  "sha256": "795989f8bab38190e8614803778f18ece1336375e6ec27dad8185e0501e48944"
+ },
+ "forum2_th/002_00002": {
+  "rows": 354733,
+  "words": 11218002,
+  "sha256": "598a0d1abb710bc1e14e7326d734fa760c3c4a44370a25e6c678f768cb21ba79"
+ },
+ "forum2_th/003_00000": {
+  "rows": 417361,
+  "words": 13056235,
+  "sha256": "19bd73488fee6e93189933f0539e91594ee89166e9fbee04a332930a7d0a04dd"
+ },
+ "forum2_th/003_00001": {
+  "rows": 416021,
+  "words": 13059316,
+  "sha256": "7cfb19566e74c093e99c55866ea19c95b67d404fa7dc67d6c1bc76753ce583db"
+ },
+ "forum2_th/003_00002": {
+  "rows": 425512,
+  "words": 13407349,
+  "sha256": "fa80d80871410b9c95e5afe2f106a720b3c7d2d49ca8d556b9676bed08615f09"
+ },
+ "forum2_th/004_00000": {
+  "rows": 519322,
+  "words": 16373111,
+  "sha256": "7828ef18470a1b5ce0d5c1f94244603a8ddfe84475065978aa22e769b5b35ab6"
+ },
+ "forum2_th/004_00001": {
+  "rows": 530288,
+  "words": 16734456,
+  "sha256": "8a59e788e665a1344d4c895e7dcbf17de3b610104c099df4d892bb01cd92122a"
+ },
+ "forum2_th/004_00002": {
+  "rows": 531020,
+  "words": 16656400,
+  "sha256": "9afce80e63b622bccccbb4bd491203ee955e04ba2b284aee0255dad287c60827"
+ },
+ "forum2_th/005_00000": {
+  "rows": 110227,
+  "words": 3473670,
+  "sha256": "f1b3a007fd8a7e35449095d6d5ba9d687951e5ad08be8522bda85492a40edfd5"
+ },
+ "forum2_th/005_00001": {
+  "rows": 103263,
+  "words": 3256627,
+  "sha256": "d744d76a0b9017a80f6f0e90369a1688d82c9db57b4099941c4078085368a69f"
+ },
+ "forum2_th/005_00002": {
+  "rows": 90589,
+  "words": 2855419,
+  "sha256": "8b11d24c0a622154e43b74e8680b788cfd9e22356cada08c67996994821a7a22"
+ },
+ "gutenberg_en/all": {
+  "rows": 1718624,
+  "words": 60768800,
+  "sha256": "8627530597511dee80889683bd2ef869acdc307e659e328aa872a733eed4913e"
+ },
+ "krathu_th/all": {
+  "rows": 66490,
+  "words": 1660051,
+  "sha256": "808688507be63f323098cddf1bc0bc6fd57b438278ab61296de639fa0a15f549"
+ },
+ "opensubtitles24_th/all": {
+  "rows": 23584428,
+  "words": 193478539,
+  "sha256": "b15962cde147dfece81c4816c3094cb2633b15f0811f2bbac560396cdbe1a5c4"
+ },
+ "opensubtitles_en/all": {
+  "rows": 9650250,
+  "words": 88354226,
+  "sha256": "ca9ad3b0b75127f874bf4e7f34f773a219939351ccca5d16aa3ac92bfc65905f"
+ },
+ "pantip_th/all": {
+  "rows": 252708,
+  "words": 6782883,
+  "sha256": "8576b73eea99a2944747dd24b92b81c603f97e75d01725d561bc7199d2efad4d"
+ },
+ "prd_th/all": {
+  "rows": 149744,
+  "words": 11099496,
+  "sha256": "6dd5fcd5a11ef9348de1e22362f31c51f77dbcaace652279baca5bc97f70366a"
+ },
+ "stackexchange_en/all": {
+  "rows": 7422062,
+  "words": 319306989,
+  "sha256": "161b15a8cd6840af50f417294818fcf008b2dbd164c009dc53cebf67189bf88a"
+ },
+ "thaifin_th/all": {
+  "rows": 894282,
+  "words": 54217942,
+  "sha256": "bd663661d5905f37430de32b5ca479c856417046be854cc33f1b85c4feda6ab0"
+ },
+ "thailaw_p/all": {
+  "rows": 61415,
+  "words": 3778164,
+  "sha256": "3f413e83a7a1efeac613225f108d7d90ec715447b880fd6074f2f936fb13cc9a"
+ },
+ "thwiki_p/all": {
+  "rows": 474201,
+  "words": 29772661,
+  "sha256": "ac862857d2c45945921d49edfcd0a3893646d2b0ce632238ed780be9b102ac9f"
+ },
+ "thwikisource_p/all": {
+  "rows": 4724,
+  "words": 307407,
+  "sha256": "76d1867d05039160585eb0cad104d02ef4c5785746277445e9286c9511ff6272"
+ },
+ "voathai_p/all": {
+  "rows": 64634,
+  "words": 3062250,
+  "sha256": "c529440e88225f1158ab75004f671d3a54e7015a005fe76deaf679f628aede62"
+ }
+}

@@ -20,7 +20,7 @@ import mlx.optimizers as optim
 import sentencepiece
 from mlx.utils import tree_flatten, tree_unflatten
 
-from train.evaluate import Evaluator, average_checkpoints, load_checkpoint, outside_scorer, validation_scorer
+from train.evaluate import BEAM, Evaluator, average_checkpoints, load_checkpoint, outside_scorer, validation_scorer
 from train.model import CONFIGS, Config, Translator
 from train.teacher import pair_of
 from train.tokenizer import BOS, EOS, PAD, UNK, WORDS, Tokenizer
@@ -276,13 +276,13 @@ def main():
     other = Path("data/public/train.jsonl")  # news, textbook and everyday sentences that no run trains on
     if other.exists():
         validation_score, outside = score, outside_scorer(other, tokenizer, {r["en"] for r in rows})
-        score = lambda model: {**validation_score(model), **outside(model)}
+        score = lambda model, beam=1: {**validation_score(model, beam), **outside(model, beam)}
     print(json.dumps({"pairs": len(rows), "examples": len(examples), "too_long": dropped, "batches_per_epoch": per_epoch, "total_steps": total, "resuming_at": trainer.step}), flush=True)
     losses = trainer.run(args.max_steps or total, evaluate=Evaluator(args.out, score), evaluate_every=max(1, per_epoch // 2))
     print(json.dumps({"step": trainer.step, "last_loss": round(losses[-1], 4) if losses else None}))
     saved = trainer.checkpoints()
     if len(saved) > 1:  # the mean of the last few checkpoints often beats any one of them
-        print(json.dumps({"averaged": len(saved), **score(load_checkpoint(average_checkpoints(saved, Path(args.out) / "averaged")))}), flush=True)
+        print(json.dumps({"averaged": len(saved), "beam": BEAM, **score(load_checkpoint(average_checkpoints(saved, Path(args.out) / "averaged")), BEAM)}), flush=True)
 
 
 if __name__ == "__main__":

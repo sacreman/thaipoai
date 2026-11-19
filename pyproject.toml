@@ -5,12 +5,19 @@ description = "A Thai-English translator trained from scratch in MLX"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "mlx>=0.32.4",
-  "sentencepiece",
+  "sentencepiece==0.2.3",
 ]
 
 [dependency-groups]
 data = [
     "pyarrow>=26.0.1",
+]
+crawl = [  # train/crawl.py and the cut sources of train/distill_sources.py; the tests do not need them
+    "pyarrow>=26.0.1",
+    "pythainlp==5.1.2",
+    "python-crfsuite==0.9.12",
+    "zstandard==0.25.0",
+    "py7zr==1.0.0",
 ]
 dev = [
     "pytest",

@@ -1,0 +1,140 @@
+name: corpus-build
+# Rebuilds the source-text rows from their pinned downloads, one job a download, then merges them and checks the
+# result against the record in train/crawl_build.json. See docs/distillation-sources.md, "The build".
+on:
+  workflow_dispatch:
+    inputs:
+      scores:
+        description: Release tag that holds selection.tgz (the score files). Empty builds and checks the rows only.
+        required: false
+permissions: {}
+concurrency: corpus-build
+env:
+  SELECTION_SHA256: 2622cb06837c656b5c7e29248ee68cceda36827a9d2269cf9cb23dd67639a4e9 # selection.tgz, from `python -m train.release selection`
+  PACKAGES: pyarrow==26.0.1 sentencepiece==0.2.3 pythainlp==5.1.2 python-crfsuite==0.9.12 zstandard==0.25.0 py7zr==1.0.0 numpy==2.5.4
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      jobs: ${{ steps.jobs.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12.13" # the filters use this version's Unicode tables
+      - id: jobs
+        run: echo "jobs=$(python -m train.crawl jobs | python -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))')" >> "$GITHUB_OUTPUT"
+
+  pool:  # sources.jsonl: the merge and the selection read the pool's rows from it
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12.13" # the filters use this version's Unicode tables
+      - run: pip install $PACKAGES
+      - name: The project's corpus and tokenizer, and the older pairs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/workflows/project-text.sh
+      - run: python -m train.distill_sources fetch
+      - run: python -m train.distill_sources candidates near
+      - run: rm data/distill/filtered.jsonl # 4 GB that mix does not read; the runner's disk is about 14 GB
+      - run: python -m train.distill_sources mix
+      - run: gzip -k data/distill/sources.jsonl
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pool
+          path: |
+            data/distill/sources.jsonl.gz
+            data/distill/manifest.json
+          retention-days: 7
+
+  build:
+    needs: list
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        job: ${{ fromJSON(needs.list.outputs.jobs) }}
+    env:
+      JOB: ${{ matrix.job }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12.13" # the filters use this version's Unicode tables
+      - run: pip install $PACKAGES
+      - name: The project's corpus and tokenizer, and the older pairs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/workflows/project-text.sh
+      - run: python -m train.crawl build "$JOB"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: build-${{ matrix.job }}
+          path: data/distill/build
+          retention-days: 7
+
+  merge:
+    needs: [pool, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      SCORES: ${{ inputs.scores }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12.13" # the filters use this version's Unicode tables
+      - run: pip install $PACKAGES
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: build-*
+          path: data/distill/build
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pool
+          path: data/distill
+      - run: gunzip data/distill/sources.jsonl.gz
+      - run: python -m train.crawl merge
+      - run: python -m train.crawl verify
+      - name: Select by the score files, and check the selected set against its record
+        if: inputs.scores != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$SCORES" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "not a release tag"; exit 1; }
+          gh release download "$SCORES" --pattern 'selection.tgz'
+          echo "$SELECTION_SHA256  selection.tgz" | sha256sum --check
+          tar -xzf selection.tgz
+          python -m train.distill_sources select select_verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: counts
+          path: |
+            data/distill/build/duplicates.json
+            data/distill/build/*/*.json
+            data/distill/selected.json
+          retention-days: 30

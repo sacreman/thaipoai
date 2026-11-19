@@ -2,6 +2,7 @@
 
 python -m train.release fetch
 python -m train.release package --version corpus-v1
+python -m train.release selection
 """
 
 import argparse
@@ -117,9 +118,38 @@ def package(version, root=ROOT, tokenizer=TOKENIZER, out=OUT):
     print(json.dumps({"version": version, "bytes": archive.stat().st_size, "sha256": sha256(archive), "files": sorted(files)}, indent=1))
 
 
+DISTILL = Path("data/distill")
+LABEL_SETS = ("prose", "chat", "subs", "en", "th_strict", "en2", "th_chat", "th_chat2")  # filters/<name>.jsonl: id, text, context, label
+
+
+def selection(distill=DISTILL, out=OUT):
+    """Package what `python -m train.distill_sources select` reads besides the rows themselves: the filter scores
+    (id<TAB>p side files), the duplicate lists and the cut-offs, with the scripts and briefs that made them and the
+    judges' labels by row id. No row text is in the archive. Extracted at the repository root it puts every file
+    where `select` looks, so the selection replays exactly without training or running a filter again."""
+    labels = distill / "labels_by_id"
+    labels.mkdir(exist_ok=True)
+    for name in LABEL_SETS:
+        with open(distill / "filters" / f"{name}.jsonl", encoding="utf8") as rows, open(labels / f"{name}.tsv", "w", encoding="utf8") as tsv:
+            for line in rows:
+                row = json.loads(line)
+                tsv.write(f"{row['id']}\t{row['label']}\n")
+    kept = [p for p in (distill / "scores").rglob("*") if p.suffix in (".tsv", ".json", ".py", ".keys")]
+    kept += list(labels.glob("*.tsv")) + list((distill / "filters").glob("*.py")) + list((distill / "filters").glob("*.sh"))
+    kept += list(distill.glob("*_labels/BRIEF*.md")) + [p for n in ("near_dups*.py", "carry_scores.py", "todo_keep.py") for p in (distill / "work").glob(n)]
+    files = {str(p): p for p in kept}
+    out.mkdir(parents=True, exist_ok=True)
+    archive = out / "selection.tgz"
+    write_archive(archive, files)
+    (out / "selection.tgz.sha256").write_text(f"{sha256(archive)}  selection.tgz\n", encoding="utf8")
+    sums = "".join(f"{sha256(p)}  {name}\n" for name, p in sorted(files.items()))
+    (out / "selection.sha256sums").write_text(sums, encoding="utf8")
+    print(json.dumps({"bytes": archive.stat().st_size, "sha256": sha256(archive), "files": len(files)}, indent=1))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("fetch", "package"))
+    parser.add_argument("command", choices=("fetch", "package", "selection"))
     parser.add_argument("--version")
     args = parser.parse_args()
-    fetch() if args.command == "fetch" else package(args.version)
+    {"fetch": fetch, "selection": selection}.get(args.command, lambda: package(args.version))()

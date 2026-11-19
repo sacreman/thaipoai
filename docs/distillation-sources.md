@@ -95,6 +95,11 @@ section 1) do not meet that test and would have to be left out of such a release
 | `lotusdis` | LOTUSDIS | Thai | spoken conversation | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | candidate | 1,436 | NECTEC, National Science and Technology Development Agency, Thailand |
 | `commonvoice_th_collector` | Common Voice sentences, Thai, sentence collector file | Thai | everyday sentences | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | candidate | 18,962 | None required |
 | `thwiki_para` | Thai Wikipedia, whole paragraphs | Thai | encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | candidate | 42,914 | As for thwiki |
+| `blognone_cut` | Blognone posts, long paragraphs cut into rows of whole sentences | Thai | technology news | [CC BY 3.0 TH](https://creativecommons.org/licenses/by/3.0/th/) | 1 | candidate | 333 | As for blognone |
+| `voathai_cut` | Voice of America Thai, long paragraphs cut into rows of whole sentences | Thai | news | [Public domain](https://www.voanews.com/p/5338.html) | 1 | candidate | 200 | As for voathai |
+| `thailaw_cut` | Thai Law Dataset v1.0, long paragraphs cut into rows of whole sentences | Thai | legal | [Public domain (Thai Copyright Act, section 7)](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | candidate | 11,974 | As for thailaw |
+| `court_cut` | Thai Supreme Court judgments, long paragraphs cut into rows of whole sentences | Thai | legal | [Public domain (Thai Copyright Act, section 7)](https://creativecommons.org/publicdomain/zero/1.0/) | 1 | candidate | 104,629 | As for court |
+| `thwiki_cut` | Thai Wikipedia, long paragraphs cut into rows of whole sentences | Thai | encyclopaedic | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | 1 | candidate | 107,003 | As for thwiki |
 | `truevoice` | TrueVoice intent, customer utterances | Thai | call-centre requests | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 2 | passed | 8,977 | TrueVoice, published by Kobkrit Viriyayudhakorn |
 | `wongnai` | Wongnai review corpus, review lines | Thai | restaurant reviews | [LGPL-3.0](https://www.gnu.org/licenses/lgpl-3.0.html) | 2 | passed | 92,353 | Wongnai and the reviews' authors. Each row's id holds the file and the review's row number |
 | `yodas` | YODAS, Thai uploader-supplied captions (th000) | Thai | spoken, video captions | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) | 2 | candidate | 15,693 | The uploader of each video. Each row's id holds the video id, https://www.youtube.com/watch?v=`<id>`. Collected by Li and others, YODAS, 2023 |
@@ -399,6 +404,39 @@ themselves). Every other source gives all its usable rows; no Thai source is cap
 this order: those that passed the bar before the candidate pool, and tier 1 before tier 2. So no row is
 dropped as the duplicate of one that the later reduction, or leaving tier 2 out, may remove.
 
+### The selected set
+
+`select` builds the set from scores instead of rules alone. Local keep-or-drop filters give each row a
+probability that it is clean, kept beside the rows as side files under `data/distill/scores`; no row file is
+changed. The crawl-side rows are those of the build (below), looked up by content key in
+`scores/build/<collection>/<slice>.tsv` (key, first score, strict score), with `scores/build_new/` for a row
+scored later. A row is in when the merge left it and its scores meet the cut-offs set in
+`train/distill_sources.py` (`SELECT_*`). A forum row with no score in its slice's file is judged by
+`scores/build_new/forum.tsv` alone. A row of the later Thai subtitles also needs its subtitle file marked
+`keep` in `scores/build_new/subs_files.tsv`, which leaves out files where few rows pass. An optional
+`scores/build_new/near_dups.keys`, a content key or pool row id a line, lists rows to leave out. It comes
+from a near-duplicate pass over the selected rows: `select` is run once without the file, the pass compares the
+rows in the file's order within each language with the builder's own rules, so the first row that says a thing
+keeps it, and `select` is run again with the list.
+The pool's Thai subtitles and English rows are chosen by id from
+`sources.jsonl`. The command writes `data/distill/selected.jsonl.gz` in a fixed order and `selected.json`:
+the rows and words by language, tier and source, and a sha256 of every id and text in that order.
+`select_record` copies `selected.json` to `train/selected_build.json`, and `select_verify` compares a later
+run with that record. Every row keeps its source and tier.
+
+The set as recorded holds 36,347,318 rows: 615.54M Thai words (32.70M of tier 1, 582.84M of tier 2) and
+209.89M English words (135.45M of tier 1, 74.44M of tier 2), so English is about a quarter of the words. Its
+sha256 is `743f56711fd1ffe433c6c3cc16c678d541523523fedff58b3c2628a538d9e119`. The words by source are in
+`train/selected_build.json`.
+
+What `select` reads besides the rows is packaged by `python -m train.release selection` as `selection.tgz`
+(1,693,721,922 bytes, sha256 `2622cb06837c656b5c7e29248ee68cceda36827a9d2269cf9cb23dd67639a4e9`): the score
+files, the list of near-duplicates, the cut-offs, the scripts that made them and the judges' labels by row
+id. It holds no row text. Extracted at the repository root, beside the merged build and `sources.jsonl`, it
+lets `select` write the recorded set again; this was checked from a separate extracted copy. The rows
+themselves are not in it: they come from the build (`data/distill/build`, with `duplicates.tsv` from the
+merge) and from the pool (`sources.jsonl`).
+
 ### The reduced set
 
 The pool is not what gets translated. A last stage, `reduce`, reads `sources.jsonl` and writes
@@ -440,6 +478,152 @@ machine-translated subtitle files; 72,186 of subtitle films in the worst band; 4
 (51,505 groups, with 23,306 rows kept as politeness variants); 8,541 too short and 11 short replies over the
 cap; 1,662 with repeated characters; 127 credit lines; 13 near-duplicates; 5 of markup or numbers.
 
+### Thai web crawls
+
+`train/crawl.py` reads published Thai web crawls into rows of the same shape, kept apart from the pool under
+`data/distill/crawl/<collection>/<slice>.jsonl`. All are tier 2: the collections are released under open
+terms, but the pages in them belong to their authors.
+
+| Collection | Dataset | Licence of the collection | Address of a page |
+|---|---|---|---|
+| `fineweb2_th` | [FineWeb2](https://huggingface.co/datasets/HuggingFaceFW/fineweb-2), `data/tha_Thai/train`, 18 files | [ODC-By 1.0](https://opendatacommons.org/licenses/by/1-0/), under the Common Crawl terms of use | yes |
+| `hplt_th` | [HPLT v2 cleaned](https://hplt-project.org/datasets/v2.0), `tha_Thai` | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | yes |
+| `mangosteen_th` | [WangchanLION-Web](https://huggingface.co/datasets/aisingapore/WangchanLION-Web) | [ODC-By 1.0](https://opendatacommons.org/licenses/by/1-0/) | no |
+
+Five more collections are read by the same reader as whole paragraphs only, with the sub-source or site
+standing where a domain would:
+
+| Collection | Dataset, pinned | Licence as stated | Tier | Words in | Words kept, short read | Words kept with long rows |
+|---|---|---|---:|---:|---:|---:|
+| `thaifin_th` | [pythainlp/thai-financial-dataset](https://huggingface.co/datasets/pythainlp/thai-financial-dataset) at `f91a3489` | cc-by-4.0 on the card; the news is its publishers', the annual reports are filings | 2 | 303.1 million | 17.1 million | 49.1 million |
+| `prd_th` | [pythainlp/prd_news_30112023](https://huggingface.co/datasets/pythainlp/prd_news_30112023) at `acf606dd` | cc0-1.0, government open data | 1 | 70.2 million | 1.9 million | 10.6 million |
+| `pantip_th` | [amitysolution/Pantip_QA_200000_20220220](https://huggingface.co/datasets/amitysolution/Pantip_QA_200000_20220220) at `df2e1d17` | none stated | 2 | 18.5 million | 4.9 million | no long read |
+| `krathu_th` | [Pittawat2542/krathu-500](https://github.com/Pittawat2542/krathu-500) at `edee1ff5` | none stated | 2 | 3.9 million | 1.3 million | no long read |
+| `wikitalk_th` | Thai Wikipedia `pages-meta-current` dump of 1 October 2026: talk, project and project-talk pages, user-talk pages over 3 KB | CC BY-SA 4.0 | 1 | 12.4 million | 1.5 million | 2.3 million |
+
+"Short read" is the first read, of whole paragraphs up to 330 characters. "With long rows" adds the read
+with `--long` (331 to 700 characters), which also lets through short rows that a long row now gives context
+to; the annual reports (0.4 million words) are left out of the financial figure. A Pantip reply carries the first line of its question as context, a krathu-500 comment its post's title, and
+a wiki comment the comment before it on the page. Forum lines may be as short as 20 characters and rows 30;
+wiki discussion 40 and 60. Wiki pages lose templates, tables, headings, indentation marks and signatures first
+(`talk()`). A government news article comes as one line and is split where two spaces stand; most of its
+paragraphs are longer than a row and are dropped. Of the financial set, 144 million words are annual reports,
+hard-wrapped and tabular, of which 0.3 million are kept.
+
+A page is dropped when it has two or more gambling, adult or spam words (or one in its address), or is not
+mostly Thai. Of its lines, those under 60 characters, menus and link lists, and lines that ask for a click, a
+call or a purchase are dropped. A paragraph that fits a row is kept whole (`-p` in the id); a longer one is cut
+into rows of whole sentences by `thai_cut` (`-c`). A row that stops on the opening word of a clause it never
+finishes is dropped. Every row then passes the filters of section 4, and is dropped if the same text was
+already kept from any slice. Each row carries `collection`, `domain`, `known` (the share of its Thai letters in
+dictionary words) and `page_kept` (the share of its page that was kept).
+
+With `--listed`, only pages of the 174 domains pinned in `train/crawl_domains.txt` are read, and only whole paragraphs
+of 120 to 330 characters are kept: nothing is cut from a longer paragraph. The head of that file says how the
+list was drawn (from the first FineWeb2 file read without a list: domains with at least 100,000 kept words and
+at least 30 kept in 100, less foreign country codes) and names every site taken out by hand, among them six
+with a stated non-commercial licence or a notice against copying.
+
+Every row must also pass `loose()` in `train/crawl.py`, which drops a row with a heading, horoscope label or
+photo caption fused on, an account name or tag, orphaned vowel or tone marks, an opening on a linking word, an
+ending that opens a clause or reported speech and never closes it, unbalanced quotes or brackets, or under 120
+Thai letters with no verb marker; mistyped marks (doubled tone or vowel marks, a stray Latin letter at the
+end, 150 characters with no space); a headline or teaser (two or more segments opening on a headline verb with
+no connective, "!!", "มาดูกัน" and the like, clauses joined by hyphens); and, when no text stands before it on the
+page, an opening or a word that points at something not shown. `python -m train.crawl tally <collection>` rewrites slices kept before
+these rules to the same standard and writes the word counts to `words.json`.
+
+With `--long`, a whole paragraph of 331 to 700 characters is kept as one row marked `"long": true` with its
+piece count; it is over the length today's trainer reads, so the count keeps such rows apart, in two bands
+(up to 500 and up to 700 characters). A long read is written to a slice of its own (`<file>.long`) and holds
+only what the short read did not keep. Over the 18 FineWeb2 files 778.2 million words pass the rules: 424.3
+million in short rows, 235.7 million in rows of 331 to 500 characters and 118.2 million in rows of 501 to 700.
+
+Left out: HPLT beyond its first trial slice (its server now refuses the files), Mangosteen's web part and
+MADLAD-400 Thai (neither gives a page's address, so the domain list cannot be applied), the auto-captioned
+YouTube part of WangchanLION-Curated (no sentence boundaries) and the Royal Gazette OCR set (hard-wrapped
+lines and mis-encoded vowels).
+
+**Licence position of the crawl text.** Crawl rows are tier 2 on the licence of the collection they came
+from. That licence covers the collection as packaged, not the pages in it, which belong to their authors and
+publishers. The terms of the individual sites have not been cleared. Tier 2 is for experiments, and nothing
+built from it is released before that is settled. The count can carry an optional label for each domain onto
+its rows (a tab-separated file under `data/distill/crawl/`, not part of the repository) and total words by
+label, so a set can be built with or without any label, as with tier.
+
+**Filter scores.** Three small classifiers, trained elsewhere in the project on rows judged clean or not, give
+each row a probability of being clean: one for forum and discussion rows, one for subtitle lines, one for
+short prose paragraphs. Scores are side files, `data/distill/scores/<source>.tsv`, of a row's id and its
+probability; `data/distill/scores/manifest.json` records for each model the sha256 of its weights, the
+length it reads (96, 192 or 192 pieces) and the sources it scored. No row file is changed and no row is
+dropped on a score here: the reduction can take a threshold. Long rows and English are not scored.
+
+Labelled by hand, strictly (A: whole, clean and standing on its own; B: usable with a flaw; C: a fragment,
+machine-translated, spun or garbled):
+
+| Sample | Rows | A | B | C |
+|---|---:|---:|---:|---:|
+| `hplt_th`, first slice, rules only | 150 | 79 | 40 | 31 |
+| `mangosteen_th`, first slice, rules only | 150 | 56 | 38 | 56 |
+| `fineweb2_th`, first slice, rules only | 150 | 67 | 44 | 39 |
+| `fineweb2_th`, first file, domains with 20,000 kept words or more | 300 | 178 | 59 | 63 |
+| of those, rows behind the domain cut: whole paragraphs | 100 | 79 | 17 | 4 |
+| of those, rows behind the domain cut: cut from longer paragraphs | 49 | 27 | 14 | 8 |
+| `fineweb2_th`, third file, read with `--listed`: whole paragraphs | 186 | 137 | 40 | 9 |
+| `fineweb2_th`, third file, read with `--listed`: cut from longer paragraphs | 114 | 61 | 25 | 28 |
+| `fineweb2_th`, fifth file, whole paragraphs under `loose()` and the trimmed list, before the length floor | 300 | 221 | 56 | 23 |
+| `fineweb2_th`, sixth file, every rule above | 150 | 111 | 28 | 11 |
+| `fineweb2_th`, eighth file, with the headline, pointing and mistyping rules | 150 | 107 | 36 | 7 |
+| `thaifin_th`, the three news sub-sources | 60 | 42 | 15 | 3 |
+| `prd_th` | 40 | 25 | 5 | 10 |
+| `pantip_th` | 80 | 55 | 19 | 6 |
+| `wikitalk_th` | 50 | 32 | 15 | 3 |
+
+By my strict labels the first rules alone left 45 to 53 rows in 100 clean (the three first-slice samples
+above); behind the domain list 66, which an independent check of 300 rows put at 64; and with every rule in,
+71 to 74, which independent checks put at 75. The size of the domain is the strongest signal found; the share
+of dictionary words, the length of the row and the share of the page kept told little. Cut rows failed mostly by
+starting or stopping inside a sentence, and no rule tried could tell the good ones, so the listed read keeps
+none. With every rule in, 71 to 74 rows in 100 are clean and 93 to 95 in 100 are clean or usable; what remains flawed is
+mostly news leads written as headlines, sentences that lean on the one before, and typing errors. Mangosteen's web part
+carries no addresses, so it cannot be cut by domain.
+
+### The build
+
+`python -m train.crawl build <job>` rebuilds the crawl-side rows from an empty checkout, one job a download.
+`python -m train.crawl jobs` lists the 27 jobs: one for each of the 18 FineWeb2 files, one for each other
+source, and `paragraphs`, which reads the pool's own downloads again as whole paragraphs.
+
+- **Pins.** `train/crawl_inputs.tsv` lists every download of these jobs: job, path, address, sha256 and bytes.
+  A job fetches its own files, checks each against the table and stops on a difference. The pool's files are
+  pinned in `PINS` as before.
+- **One archive is fetched in part.** The English subtitles archive is 13.7 GB and the read uses about a tenth
+  of it. The job fetches the archive's index, checks it against the pinned sha256, and then fetches only the
+  files that will be read. The index holds a checksum of every file, which the reader checks as it reads.
+- **A job carries nothing from another.** Each read applies every rule itself and removes repeats within its
+  own slice only. Rows go to `data/distill/build/<collection>/<slice>.jsonl.gz`, with a record of rows, words
+  and a sha256 of every id and text beside them.
+- **Content key.** Every row has a `key`: BLAKE2b, 8 bytes, as 16 hexadecimal characters, over the page id
+  (the row id without its last `-` part), the text, and the last 200 characters of the context or nothing,
+  joined by the character U+001F. Scores and lists refer to rows by this key, so they do not depend on the
+  order rows were read in.
+- **Merge.** `python -m train.crawl merge` settles repeats across slices. Of rows that say the same thing the
+  first stays, in a fixed order of collections with tier 1 first, then by slice name, then as read. A Thai
+  subtitle row of the pool comes before them all. The others are listed in `build/duplicates.tsv`.
+- **Record.** `train/crawl_build.json` holds the rows, words and sha256 of each of the 50 slices.
+  `python -m train.crawl verify` compares a build with it. Built twice from empty, a job gave the same bytes.
+
+A read checks its rows against what the project already holds, so each job needs the corpus release
+unpacked at the root, `data/public/train.jsonl` and `validation.jsonl`, and the two benchmark files of the
+pool, which the job fetches itself.
+
+Measured on an Apple M4 Max laptop with four workers: a FineWeb2 file takes 6 to 38 minutes and up to 4.9 GB
+of memory, Stack Exchange 68 minutes, Thai subtitles 65 minutes, and every other job under 30 minutes. The
+merge takes under two minutes and 2.1 GB. The largest download kept on disk during a job is 5.2 GB.
+
+Built on 18 November 2026 the build holds 65,558,055 rows, of which the merge leaves 56,915,421, or
+1,608.5 million words.
+
 ## 7. Commands
 
 ```
@@ -450,7 +634,24 @@ python -m train.distill_sources mix         # re-balance after changing a take
 python -m train.distill_sources mix_tier1   # the same mix with every tier 2 source left out
 python -m train.distill_sources reduce      # from the pool to distill_set.jsonl, the set to translate
 python -m train.distill_sources reduce_tier1  # the same without tier 2
+python -m train.distill_sources select        # the rows the score files choose, to selected.jsonl.gz
+python -m train.distill_sources select_tier1  # the same without tier 2
+python -m train.distill_sources select select_verify  # and compare with train/selected_build.json
+python -m train.crawl jobs                    # the jobs of the build
+python -m train.crawl build <job>             # fetch, check and read one job into data/distill/build
+python -m train.crawl build all               # every job in turn
+python -m train.crawl merge                   # settle repeats across slices
+python -m train.crawl verify                  # compare with train/crawl_build.json
 ```
+
+The crawl reader is run apart, one slice at a time, on a downloaded file of the collection:
+
+```
+python -m train.crawl fineweb2_th 000_00002 000_00002.parquet --listed   # one file, listed domains only
+python -m train.crawl tally fineweb2_th                                  # words collected and behind the cut
+```
+
+It needs `pythainlp==5.1.2`, `python-crfsuite`, `pyarrow` and, for HPLT, `zstandard`.
 
 `candidates` reads the downloads and writes `filtered.jsonl`. `near` writes `candidates.jsonl`. `mix`
 writes `sources.jsonl` and `manifest.json`. `reduce` writes `distill_set.jsonl` and `distill_set.json`, in about five minutes. Nothing else is needed: no hand edits, no login, no other script.
@@ -499,16 +700,30 @@ unpacked, as they were first downloaded for the project.
 Until they are mirrored, `data/distill/raw` on the build machine is the only copy, and `fetch` cannot
 rebuild it from an empty checkout once the publishers have moved on.
 
-## 9. What a GitHub Actions job still needs
+## 9. The GitHub Actions workflow
 
-No workflow exists yet. Open items:
+`.github/workflows/corpus-build.yml` is a draft and has not been run. It has a job for the pool, a matrix of
+one job for each entry of `python -m train.crawl jobs`, and a last job that merges, verifies and, given a
+release that holds the score files, selects and checks the selected set against its record. Open items:
 
-1. **Mirror the inputs above** and point their addresses at the mirror.
-2. **The older public pairs.** `data/public/train.jsonl` and `data/public/validation.jsonl` are read for
-   the exclusion steps and are not built by any script in the repository. Either add their build, or
-   exclude their sources directly from pinned downloads.
-3. **Build the corpus and tokenizer first** in the same job, or download the corpus release.
-4. **Confirm on Linux.** The build has only run on macOS (Apple silicon).
+1. **Mirror the inputs that are not kept upstream**: the ten files above, and the Thai Wikisource dump of the
+   build (`thwikisource-20261101-pages-articles.xml.bz2`). Until then a run fails at their checksum once the
+   publisher has moved on.
+2. **The older public pairs.** `data/public/train.jsonl` and `data/public/validation.jsonl` are read for the
+   exclusion steps and are not built by any script in the repository. The workflow takes them from a release
+   named `build-inputs-v1`, which does not exist yet.
+3. **Publishers that may change a file in place.** Project Gutenberg corrects books without a new address,
+   and the Stack Exchange archives are replaced at each new dump. A changed file stops the job at its
+   checksum; a mirror would be the only way to rebuild the same rows afterwards.
+4. **The score files are an input.** So is the list of near-duplicates to leave out, which is kept with
+   them. They come from filters trained and run apart, and are packaged by
+   `python -m train.release selection`; the workflow does not make them again. It checks `selection.tgz`
+   against the sha256 above, which is written in the workflow file, and no release holds the archive yet.
+5. **Confirm on Linux.** The build has only run on macOS (Apple silicon), and the times above are from that
+   machine. The hosted runner's cores are slower.
+6. **Disk in the last job.** The merged build is 11 GB, `sources.jsonl` 3.5 GB, the extracted score files
+   5.3 GB and the selected rows 4.1 GB, about 24 GB together and more than a hosted runner's 14 GB. The
+   job needs a larger runner, or the selection has to read the slices one artifact at a time.
 
 ### Determinism
 
@@ -532,7 +747,7 @@ Measured on an Apple M4 Max laptop:
 
 | Step | Wall time | Peak memory |
 |---|---:|---:|
-| `fetch`, all files (3.6 GB) | not timed as one run | not measured |
+| `fetch`, all 247 files (4.2 GB, measured on disk) | not timed as one run | not measured |
 | `candidates`, `near` and `mix` together | 45 minutes | 5.3 GB |
 
 Peak disk is about 16 GB: 4.2 GB of downloads, 4.1 GB `filtered.jsonl`, 4.0 GB `candidates.jsonl` and 3.4 GB

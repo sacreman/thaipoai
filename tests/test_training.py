@@ -42,6 +42,7 @@ def test_it_memorises_a_tiny_dataset(tmp_path):
     assert losses[-1] < 0.05 < losses[0]
     for source, target in DATA:
         assert trainer.model.translate([source], limit=8) == [target]
+    assert trainer.model.translate([source for source, _ in DATA], limit=8, beam=4) == [target for _, target in DATA]
 
 
 def test_every_weight_updates_including_the_shared_embedding(tmp_path):
@@ -201,7 +202,7 @@ def test_the_outside_score_uses_unseen_pairs_from_each_origin(tmp_path):
     asked = []
 
     class Echo:
-        def translate(self, sources):
+        def translate(self, sources, beam=1):
             asked.extend(sources)
             return [source[1:-1] for source in sources]  # the source back, without its marker and end
 

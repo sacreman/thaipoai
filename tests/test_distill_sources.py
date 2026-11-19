@@ -1,4 +1,6 @@
 import bz2
+import types
+import sys
 import collections
 import gzip
 import io
@@ -501,9 +503,10 @@ def test_a_forward_only_source_marks_every_row_and_the_manifest(tmp_path, monkey
 
 def test_thai_wikipedia_is_forward_only_and_under_bar_thai_sources_are_candidates_with_their_scores():
     by_name = {s.name: s for s in d.SOURCES}
-    assert by_name["thwiki"].use == "forward_only" and [s.name for s in d.SOURCES if s.use] == ["thwiki"]
+    assert by_name["thwiki"].use == "forward_only" and [s.name for s in d.SOURCES if s.use] == ["thwiki", "thwiki_cut"]
     candidates = {s.name for s in d.SOURCES if s.pool == "candidate"}
-    assert candidates == {"thwiki_para", "iapp", "yodas", "lotusdis", "commonvoice_th_collector", "opensubtitles_th", "wisesight"}
+    assert candidates == {"thwiki_para", "iapp", "yodas", "lotusdis", "commonvoice_th_collector", "opensubtitles_th", "wisesight",
+                          "thwiki_cut", "voathai_cut", "blognone_cut", "thailaw_cut", "court_cut"}
     assert all(by_name[n].score and by_name[n].take is None for n in candidates)  # kept whole, with the score the reduction can weigh
 
 
@@ -674,6 +677,25 @@ def test_subtitles_are_repaired_and_never_joined_across_speakers_or_songs(raw, m
     assert d.FILE_SIGNS["1/1"] == [10, 3, 1] and "3/3" not in d.FILE_SIGNS  # ten Thai lines, three with a particle of speech, one possessive
 
 
+def test_words_are_counted_by_spaces_in_english_and_by_measured_letters_in_thai():
+    counted = {("a", "en", 1): d.words({"text": "Three short words.", "lang": "en", "source": "a"}),
+               ("opensubtitles_th", "th", 2): d.words({"text": "วันนี้อากาศดีมาก ok", "lang": "th", "source": "opensubtitles_th"})}  # 16 Thai letters at 3.91 to a word
+    assert d.word_table(counted) == {"all": 7, "by_language_and_tier": {"en tier 1": 3, "th tier 2": 4}, "by_source": {"a": 3, "opensubtitles_th": 4}}
+
+
+def test_a_long_thai_paragraph_is_cut_only_where_the_rules_agree_and_packed_into_rows(monkeypatch):
+    pieces = ["กรุงเทพมหานครเป็นเมืองหลวงและเมืองที่มีประชากรมากที่สุดของประเทศไทย", "ซึ่งตั้งอยู่บนสามเหลี่ยมปากแม่น้ำเจ้าพระยา",  # the second carries the first on
+              "เมืองนี้เป็นศูนย์กลางการปกครอง การศึกษา การคมนาคมขนส่ง และการเงินการธนาคารของประเทศ", "นักท่องเที่ยวจำนวนมากเดินทางมาเยี่ยมชมวัดและพระราชวังทุกปี"]
+    tokenize = types.ModuleType("pythainlp.tokenize")
+    tokenize.sent_tokenize = lambda text, engine: pieces * text.count(pieces[0])
+    monkeypatch.setitem(sys.modules, "pythainlp", types.ModuleType("pythainlp"))
+    monkeypatch.setitem(sys.modules, "pythainlp.tokenize", tokenize)
+    assert d.thai_cut(" ".join(pieces), limit=140) == [pieces[0] + " " + pieces[1], pieces[2], pieces[3]]
+    assert d.thai_cut(" ".join(pieces), limit=400) == [" ".join(pieces)]  # as few rows as fit
+    rows = list(d.recut([("a-1", " ".join(pieces) * 3, "th", None), ("a-2", "สั้น", "th", None)]))
+    assert [r[0] for r in rows][:2] == ["a-1-c0", "a-1-c1"] and rows[0][3] is None and rows[1][3] == rows[0][1]  # only the long piece, each row with the one before
+
+
 def test_tier_2_sources_come_after_every_tier_1_source_that_is_taken():
     order = [(s.tier, s.pool == "candidate") for s in d.SOURCES]
     assert order == sorted(order)  # so no row is dropped as the duplicate of a tier 2 or candidate row that may later be removed
@@ -723,3 +745,103 @@ def test_reduction_keeps_one_of_each_look_alike_and_drops_what_should_not_be_tra
     assert (tmp_path / "distill_set.jsonl").read_bytes() == first  # the same again
     d.reduce(tiers=(1,))
     assert [json.loads(line)["id"] for line in (tmp_path / "distill_set.jsonl").read_text().splitlines()] == ["passed-1", "passed-2"]
+
+
+def test_a_crawled_page_gives_whole_prose_rows_and_drops_menus_clicks_and_broken_rows():
+    import collections
+
+    from train import crawl
+
+    short = "เมื่อวานนี้ฝนตกหนักมากทั่วทั้งกรุงเทพมหานครจนทำให้ถนนหลายสายมีน้ำท่วมขังและการจราจรติดขัดเป็นเวลานาน"
+    prose = short + " ผู้ว่าราชการจึงสั่งให้เจ้าหน้าที่เร่งระบายน้ำออกจากถนนสายหลักให้เสร็จก่อนเช้าวันจันทร์"
+    assert len(short) < crawl.WHOLE_MIN <= len(prose)
+    broken = [prose + " อย่างไรก็ตามยัง", "ซึ่ง" + prose, "การเงิน " + prose, prose + " นายกรัฐมนตรีกล่าวว่า", prose + " (ที่ 3 จากซ้าย)"]
+    page = "\n".join(["หน้าแรก", "ข่าว กีฬา บันเทิง ดวง หวย รถ บ้าน เกม ท่องเที่ยว อาหาร สุขภาพ ผู้หญิง ผู้ชาย เพลง หนัง", prose, prose + " คลิกอ่านต่อได้ที่นี่", *broken, short, prose * 3])
+    counts = collections.Counter()
+    assert list(crawl.page_rows("x-1", page, counts, cut=False)) == [("x-1-p0", prose, "th", None)]
+    assert counts == {"short line": 1, "menu or list": 1, "asks for a click or a purchase": 1, "stops inside a sentence": 2, "opens inside a sentence": 1,
+                      "label or caption fused on": 2, "shorter than a counted row": 1, "longer than a row": 1}
+    assert crawl.loose("รายชื่อโรงเรียนมัธยมศึกษาขนาดใหญ่พิเศษประจำจังหวัดเชียงใหม่ ลำพูน ลำปาง แพร่ น่าน พะเยา") == "short with no verb"
+    assert crawl.loose(prose + " เพราะไม่มีที่ระบายน้ำเพียงพอสำหรับฝนที่ตกหนักขนาดนี้") is None
+    assert crawl.loose("ตำรวจเร่งล่าคนร้ายยิงเจ้าของร้านทองกลางเมืองเมื่อคืนที่ผ่านมา ชี้เป็นมืออาชีพวางแผนมาอย่างดี คาดหนีข้ามจังหวัดไปแล้ว เตรียมออกหมายจับภายในสัปดาห์นี้") == "headline or teaser"
+    pointing = "คำตอบคือการออกกำลังกายอย่างสม่ำเสมอทุกวันและการนอนหลับพักผ่อนให้เพียงพอ ซึ่งจะช่วยให้ร่างกายของเราแข็งแรงและมีภูมิคุ้มกันที่ดีขึ้นอย่างเห็นได้ชัด"
+    assert crawl.loose(pointing) == "points at something not shown" and crawl.loose(pointing, prose) is None
+    assert crawl.loose(prose.replace("น้ำท่วม", "น้้ำท่วม")) == "mistyped" and crawl.kind_of("writer.dek-d.com") == "fiction"
+    assert crawl.talk("== หัวข้อ ==\n{{ต้อนรับ}}\n::ผมเห็นด้วยกับ[[ผู้ใช้:ก|คุณ ก]] ว่าควรย้าย'''บทความ'''นี้ไปที่[[ชื่อใหม่]] --[[ผู้ใช้:ข|ข]] ([[คุยกับผู้ใช้:ข|คุย]]) 10:15, 3 มกราคม 2563 (ICT)\n{| class=x\n| ตาราง\n|}") == "ผมเห็นด้วยกับคุณ ก ว่าควรย้ายบทความนี้ไปที่ชื่อใหม่"
+    full = "ก" * 80
+    assert crawl.unwrapped(f"{full}\n{full}\nสั้น\nข้อ ๒ {full}\nพระรำชบัญญัติมำตรำ\nท้าย") == f"{full}{full}สั้น\nท้าย"  # joined across the wrap; the paragraph with the broken font goes
+    assert crawl.unwrapped(f"ข้อ ๒ {full}") == full
+    book = "Title: X\n*** START OF THIS PROJECT GUTENBERG EBOOK X ***\n\nCHAPTER I\n\n\"Where are you\ngoing?\" she _asked_.\n\nHe did not answer.\n\n*** END OF THIS PROJECT GUTENBERG EBOOK X ***\nlicence"
+    assert crawl.book_paragraphs(book) == '"Where are you going?" she asked.'
+    # an English discussion comment loses a vote word fused to its front and a signature left at its end; votes
+    # with no sentence, canned notices, policy shortcuts and holes left by a template go
+    assert crawl.discussion_en("Delete I do not believe Bowers meets the notability criteria at all.") == ("I do not believe Bowers meets the notability criteria at all.", None)
+    assert crawl.discussion_en("I agree with the change to the lead. — Preceding unsigned comment added by Foo (talk • contribs) 10:01, 2 May 2010 (UTC)") == ("I agree with the change to the lead.", None)
+    assert crawl.discussion_en("Keep in mind that the assessment on importance was probably made years ago.")[1] is None
+    assert [crawl.discussion_en(text)[1] for text in ("Delete as most certainly a hoax. Zero search results for the supposed university.", "Meatball is the most vandalized page with a total of 7 vandalisms in the last 48 hours.",
+                                                      "I would say it was unnecessary, but it needs to stay to satisfy WP:VERIFY.", "I think that an tag for the text should be added in the introduction paragraph.")] \
+        == ["a vote without a sentence", "canned or automated message", "policy shortcut", "a template or link is missing"]
+    # a cap fills every group to one level, doubled for a weighted group, and never past what a group has or the ceiling
+    assert {g: round(n) for g, n in crawl.quotas({"a": 100, "b": 100, "c": 10, "d": 100}, 100, 40, {"b": 2}).items()} == {"a": 25, "b": 40, "c": 10, "d": 25}
+    assert crawl.domain_of("https://www.thairath.co.th/news/1") == "thairath.co.th"
+    listed = [line for line in crawl.LISTED.read_text(encoding="utf8").splitlines() if line and not line.startswith("#")]
+    assert "thairath.co.th" in listed and "th.tripadvisor.com" not in listed and "prachatai.com" not in listed and listed == sorted(set(listed))
+
+
+def test_select_takes_the_rows_the_score_files_choose_and_keeps_their_tier(tmp_path, monkeypatch):
+    import gzip
+    monkeypatch.setattr(d, "OUT", tmp_path)
+    monkeypatch.setattr(d, "SELECTED", tmp_path / "recorded.json")
+    row = lambda i, text, lang="th", source="pantip_th", tier=2, **more: json.dumps({"id": i, "text": text, "lang": lang, "source": source, "tier": tier} | more, ensure_ascii=False) + "\n"
+    thai = "วันนี้อากาศดีมากเลยออกไปเดินเล่นที่สวน"
+    write(tmp_path / "build/pantip_th/all.jsonl.gz", "".join(row(i, thai, key=f"{n:016x}") for n, i in enumerate("abcdef", 1)), gzip.open)
+    write(tmp_path / "scores/build/pantip_th/all.tsv", "0000000000000001\t0.95\t0.9\n0000000000000002\t0.95\t0.1\n0000000000000003\t0.5\t0.9\n0000000000000004\t0.95\t0.9\n0000000000000005\t0.95\t\n")  # b fails the strict filter, whose cut-off for a forum is low; c the first
+    write(tmp_path / "scores/build_new/prose.tsv", "0000000000000006\t0.95\n")  # f was scored later, and e got its strict score later
+    write(tmp_path / "scores/build_new/prose.strict.tsv", "0000000000000005\t0.9\n0000000000000006\t0.9\n")
+    write(tmp_path / "build/duplicates.tsv", "pantip_th/all\td\t0000000000000004\n")  # d repeats a row of another slice
+    write(tmp_path / "build/stackexchange_en/all.jsonl.gz", row("se-cooking-1-p0", "Salt the water first.", "en", "stackexchange_en", 1, key="00000000000000a1") + row("se-ell-2-p0", "Use the past tense here.", "en", "stackexchange_en", 1, key="00000000000000a2"), gzip.open)
+    write(tmp_path / "scores/build/stackexchange_en/all.tsv", "00000000000000a1\t0.99\t\n00000000000000a2\t0.99\t\n")
+    write(tmp_path / "sources.jsonl", row("s1", thai, source="opensubtitles_th") + row("s2", thai, source="opensubtitles_th") + row("e1", "How are you today?", "en", "soda", 1) + row("e2", "Fine, thanks.", "en", "soda", 1))
+    write(tmp_path / "scores/opensubtitles_th.tsv", "s1\t0.96\ns2\t0.9\n")
+    write(tmp_path / "scores/en2/pool_en.tsv", "e1\t0.9\ne2\t0.5\n")
+    write(tmp_path / "scores/build_new/forum.tsv", "0000000000000007\t0.9\n0000000000000002\t0.9\n00000000000000f1\t0.9\n00000000000000f2\t0.5\n")  # g has no carried score and passes as a forum row; b has one, so this score is not asked
+    write(tmp_path / "build/pantip_th/more.jsonl.gz", row("g", thai, key="0000000000000007"), gzip.open)
+    write(tmp_path / "build/forum2_th/all.jsonl.gz", row("f1", thai, source="forum2_th", key="00000000000000f1") + row("f2", thai, source="forum2_th", key="00000000000000f2"), gzip.open)
+    film = lambda i, key: row(f"opensubtitles24_th-{i}", thai, source="opensubtitles24_th", key=key)
+    write(tmp_path / "build/opensubtitles24_th/all.jsonl.gz", film("10_2-77-1", "00000000000000b1") + film("10_2-77-2", "00000000000000b2") + film("11-78-1", "00000000000000b3") + film("10_2-77-3", "00000000000000b4"), gzip.open)
+    write(tmp_path / "scores/build/opensubtitles24_th/all.tsv", "00000000000000b1\t0.96\t\n00000000000000b2\t0.5\t\n00000000000000b3\t0.96\t\n00000000000000b4\t0.96\t\n")
+    write(tmp_path / "scores/build_new/subs_files.tsv", "10_2-77\t0.5\tkeep\n11-78\t0.1\tdrop\n")  # the second file is dropped whole
+    write(tmp_path / "scores/build_new/near_dups.keys", "00000000000000b4\n")  # and one row is left out by its key
+    d.select()
+    assert [json.loads(line)["id"] for line in gzip.open(tmp_path / "selected.jsonl.gz", "rt", encoding="utf8")] == ["a", "e", "g", "f1", "se-cooking-1-p0", "opensubtitles24_th-10_2-77-1", "s1", "e1"]  # f, a forum row with no carried score, is not in the forum scores
+    (tmp_path / "recorded.json").write_text((tmp_path / "selected.json").read_text())
+    d.select_verify()
+    d.select((1,))
+    assert [(r["id"], r["tier"]) for r in map(json.loads, gzip.open(tmp_path / "selected.jsonl.gz", "rt", encoding="utf8"))] == [("se-cooking-1-p0", 1), ("e1", 1)]
+    assert json.loads((tmp_path / "selected.json").read_text())["words"]["by_language_and_tier"] == {"en tier 1": 8}
+    with pytest.raises(SystemExit):
+        d.select_verify()  # the tier 1 set is not the one recorded
+
+
+def test_a_chat_row_that_leans_on_the_line_before_stays_only_with_that_line_as_context():
+    import collections
+    import dataclasses
+    plain = next(s for s in d.SOURCES if s.name == "opensubtitles_th")
+    sift = lambda source, before: d.sift(source, [("a", "เลยต้องรีบกลับบ้านก่อนนะ", "th", before)], lambda texts: [5] * len(texts), set(), set(), set(), collections.Counter(), collections.Counter())
+    chat = dataclasses.replace(plain, leaning=True)
+    assert [r["context"] for r in sift(chat, "วันนี้ฝนตกหนักมากเลย")] == ["วันนี้ฝนตกหนักมากเลย"]
+    assert sift(chat, None) == [] and sift(plain, "วันนี้ฝนตกหนักมากเลย") == []
+
+
+def test_the_build_keys_a_row_by_page_text_and_context_and_merges_repeats_in_a_fixed_order(tmp_path, monkeypatch):
+    import gzip
+    from train import crawl
+    row = {"id": "fineweb2_th-page1-p3", "text": "ข้อความ", "context": "x" * 300}
+    assert crawl.content_key(row) == crawl.content_key(row | {"id": "fineweb2_th-page1-p9", "context": "y" + "x" * 200})  # the paragraph's number and the context before its last 200 characters do not count
+    assert len({crawl.content_key(row), crawl.content_key(row | {"text": "อื่น"}), crawl.content_key(row | {"context": None}), crawl.content_key(row | {"id": "fineweb2_th-page2-p3"})}) == 4
+    monkeypatch.setattr(crawl, "BUILD", tmp_path)
+    monkeypatch.setattr(d, "OUT", tmp_path)  # no pool here
+    for name, lines in (("fineweb2_th", "a\tk1\t00000000000000aa\t3.00\nb\tk2\t00000000000000bb\t2.00\n"), ("prd_th", "c\tk3\t00000000000000bb\t2.00\n")):
+        write(tmp_path / name / "all.marks.tsv.gz", lines, gzip.open)
+    assert crawl.merge() == {"left rows": 2, "left words": 5, "repeats rows": 1, "repeats words": 2}
+    assert (tmp_path / "duplicates.tsv").read_text() == "fineweb2_th/all\tb\tk2\n"  # the tier 1 collection is read first and keeps the row

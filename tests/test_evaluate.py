@@ -48,6 +48,26 @@ def test_incremental_decoding_matches_recomputing_the_whole_prefix():
     assert model.translate([source], limit=6)[0] == [i for i in expected if i not in (PAD, BOS)]
 
 
+def test_beam_search_finds_output_at_least_as_likely_as_greedy_and_decodes_a_batch_like_single_sources():
+    mx.random.seed(4)
+    model = Translator(TINY)
+    mx.eval(model.parameters())
+    sources = [source for source, _ in DATA]
+
+    def log_probability(source, output):
+        logits = model(mx.array([source]), mx.array([[BOS, *output]]))
+        chosen = mx.take_along_axis(mx.log(mx.softmax(logits, axis=-1)), mx.array([[*output, EOS]])[:, :, None], axis=-1)
+        return chosen.sum().item() / (len(output) + 1)
+
+    wide, greedy = model.translate(sources, limit=6, beam=4), model.translate(sources, limit=6)
+    model.eval()
+    assert wide == [model.translate([s], limit=6, beam=4)[0] for s in sources]
+    model.eval()
+    finished = [(s, w, g) for s, w, g in zip(sources, wide, greedy) if len(w) < 5 and len(g) < 5]  # both reached the end marker
+    assert all(log_probability(s, w) >= log_probability(s, g) - 1e-4 for s, w, g in finished)
+    assert all(BOS not in ids and EOS not in ids and PAD not in ids for ids in wide)
+
+
 def test_translation_contains_no_control_tokens():
     mx.random.seed(2)
     model = Translator(TINY)

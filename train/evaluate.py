@@ -20,6 +20,7 @@ from train.model import Config, Translator
 from train.tokenizer import EOS, Tokenizer
 
 SAMPLE_ROWS = 2000
+BEAM = 5  # for final scores and suites; checkpoints during training are scored greedy, which is faster
 
 
 def character_ngrams(text, n):
@@ -58,8 +59,8 @@ def validation_scorer(rows, tokenizer):
     for index, r in enumerate(sample):
         groups[f"{r['source']}/{r['subset']}"] += [index, index + len(sample)]
 
-    def score(model):
-        hypotheses = [tokenizer.decode(ids) for ids in model.translate(sources)]
+    def score(model, beam=1):
+        hypotheses = [tokenizer.decode(ids) for ids in model.translate(sources, beam=beam)]
         half = len(sample)
         en_th, th_en = chrf(hypotheses[:half], references[:half]), chrf(hypotheses[half:], references[half:])
         by_source = {name: round(chrf([hypotheses[i] for i in idx], [references[i] for i in idx]), 2) for name, idx in sorted(groups.items())}
@@ -92,8 +93,8 @@ def outside_scorer(path, tokenizer, trained_english):
         sources += [encoded(tokenizer, en, "th"), encoded(tokenizer, th, "en")]
         references += [th, en]
 
-    def score(model):
-        hypotheses = [tokenizer.decode(ids) for ids in model.translate(sources)]
+    def score(model, beam=1):
+        hypotheses = [tokenizer.decode(ids) for ids in model.translate(sources, beam=beam)]
         pick = lambda items, indexes: [items[i] for i in indexes]
         scores = {f"outside_{origin}": round(chrf(pick(hypotheses, idx), pick(references, idx)), 2) for origin, idx in groups.items()}
         return {"outside": round(sum(scores.values()) / max(1, len(scores)), 2), **scores}
@@ -159,11 +160,11 @@ def average_checkpoints(paths, out):
     return out
 
 
-def translate_suite(checkpoint, suite, out, system):
+def translate_suite(checkpoint, suite, out, system, beam=BEAM):
     """Writes the same result rows as cmd/suite, so evaluation/compare_systems.py can judge them."""
     cases = [json.loads(line) for line in Path(suite).read_text(encoding="utf8").splitlines() if line.strip()]
     tokenizer, model = Tokenizer(), load_checkpoint(checkpoint)
-    outputs = model.translate([encoded(tokenizer, c["source"], c["direction"][-2:]) for c in cases])
+    outputs = model.translate([encoded(tokenizer, c["source"], c["direction"][-2:]) for c in cases], beam=beam)
     rows = [{"id": c["id"], "system": system, "variant": "none", "direction": c["direction"], "category": c.get("category", ""), "output": tokenizer.decode(ids)} for c, ids in zip(cases, outputs)]
     Path(out).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf8")
     print(f"{len(rows)} translations written to {out}")
@@ -175,5 +176,6 @@ if __name__ == "__main__":
     parser.add_argument("--suite", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--system", default="from-scratch")
+    parser.add_argument("--beam", type=int, default=BEAM, help="1 for greedy")
     args = parser.parse_args()
-    translate_suite(args.checkpoint, args.suite, args.out, args.system)
+    translate_suite(args.checkpoint, args.suite, args.out, args.system, args.beam)

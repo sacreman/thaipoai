@@ -1,7 +1,7 @@
 """Collect the English and Thai sentences that will be sent to the teacher for translation, once.
 
 Reads pinned downloads under data/distill/raw and writes data/distill/sources.jsonl and manifest.json.
-Every row is one chat utterance or one sentence of prose, with its source, register and licence.
+Every row is one chat utterance, one sentence of prose or one whole paragraph, with its source, register and licence.
 Nothing here calls a translation service.
 
 Fetch:      python -m train.distill_sources fetch
@@ -10,6 +10,7 @@ Near only:  python -m train.distill_sources near mix   (re-does near-duplicate r
 Re-balance: python -m train.distill_sources mix   (after changing a source's take; reuses the filtered rows)
 Tier 1 only: python -m train.distill_sources mix_tier1   (the same mix with the tier 2 sources left out)
 Reduce:     python -m train.distill_sources reduce   (from the pool, sources.jsonl, to distill_set.jsonl; reduce_tier1 leaves tier 2 out)
+Select:     python -m train.distill_sources select   (the rows the score files choose, to selected.jsonl.gz; select_tier1 leaves tier 2 out)
 """
 
 import array
@@ -44,8 +45,10 @@ RETRIEVED = "2026-11-10"
 NOT_KEPT = re.compile(r"tatoeba/|sgd/|\w*wiki\w*/")
 TOKENIZER_SHA256 = "94f70f275460bc1ebc59fa2f8a2fbd2eaa21f490560d0292f43ddcf2d4265d75"  # models/tokenizer-v1, from the corpus release
 MAX_CHARS = {"en": 300, "th": 250}
-# The trainer drops anything over 128 pieces, and the translation has to fit too. On the existing corpus English
-# takes 1.3 times the pieces of its Thai, and up to 2 times for one pair in twenty, so Thai gets the tighter limit.
+# The trainer drops anything over 128 pieces, and the translation has to fit too. On the existing corpus's pairs
+# of 40 Thai pieces or more, English takes 1.22 times the pieces of its Thai at the median and 1.66 times at the
+# 95th percentile. The limits are set by the 95th percentile, so that one pair in twenty still fits: 64 Thai
+# pieces come to 106 English ones, and 100 English pieces to fewer Thai. Hence the tighter limit for Thai.
 MAX_PIECES = {"en": 100, "th": 64}
 OPENER_WORDS = 3
 PREVIOUS_CAP = 2  # most task-dialogue rows that may answer the very same previous line
@@ -175,6 +178,54 @@ def thai_rows(prefix, paragraphs):
             else:
                 yield f"{prefix}-{n}", sentence, "th", previous
             previous, n = sentence, n + 1
+
+
+# Openers that show a piece carries on the sentence before it, on top of THAI_START and THAI_LOGIC: a result, a manner, a number or a closing bracket.
+CARRIES_ON_THAI = re.compile("ทำให้|ส่งผลให้|เป็นผลให้|โดย|ซึ่ง|ที่|อัน|ด้วย|เพราะ|เนื่องจาก|จน|ถึง|ตาม|ใน(?:ขณะ|การ)|เป็น|คือ|ได้|ไม่|มี|ให้|จะ|ว่า|กับ|แก่|ต่อ|ของ|นั้น|นี้|ดังกล่าว|ใน(?!ปี|วัน|เดือน|ช่วง|ปัจจุบัน|อดีต|ขณะ|ที่สุด)|เมื่อ(?:ราว|ประมาณ)|ก่อน(?:จะ|ที่)|[0-9๐-๙a-z)\\]”,.;:%-]")
+ABBREVIATED = re.compile("(?:^|[ (])[ก-ฮA-Za-z]{1,3}\\.$|พ\\.ศ\\.$|ค\\.ศ\\.$|[0-9๐-๙]\\.$")
+
+
+CUT_CHARS = 330  # characters a row cut from a long paragraph may hold: Thai of that length is about the 80 pieces a paragraph row may have
+
+
+def thai_cut(paragraph, limit=CUT_CHARS):
+    """A long Thai paragraph as rows of whole sentences, each within limit characters. Thai marks no sentence
+    end, so the places to cut come from a trained cutter (CRFCut of PyThaiNLP, a pinned version, run locally)
+    and a cut is kept only where the rules agree: the piece before is 40 characters or more, closes its
+    brackets and quotes, and does not end in a dangling word or an abbreviation; the piece after does not open
+    with a word that carries a sentence on. Sentences are then packed into as few rows as fit."""
+    from pythainlp.tokenize import sent_tokenize  # not a dependency of the project: only the sources that cut long paragraphs need it
+
+    sentences_found = []
+    for piece in (p.strip() for p in sent_tokenize(paragraph, engine="crfcut")):
+        last = sentences_found[-1] if sentences_found else ""
+        closed = last.count("(") <= last.count(")") and last.count("“") <= last.count("”") and last.count('"') % 2 == 0
+        stands = len(last) >= 40 and closed and not THAI_DANGLING.search(last) and not ABBREVIATED.search(last) and not (THAI_IF.match(last) and not THAI_THEN.search(last))
+        leans = THAI_START.match(piece) or THAI_LOGIC.match(piece) or CARRIES_ON_THAI.match(piece) or THAI_SUBJECTLESS.match(THAI_OPENER.sub("", piece, count=1).lstrip(" ,")) or len(piece) < 40
+        if not piece:
+            continue
+        if last and not (stands and not leans):
+            sentences_found[-1] = f"{last} {piece}"
+        else:
+            sentences_found.append(piece)
+    rows = []
+    for sentence in sentences_found:
+        if rows and len(rows[-1]) + len(sentence) < limit:
+            rows[-1] += " " + sentence
+        else:
+            rows.append(sentence)
+    return rows
+
+
+def recut(rows):
+    """The pieces too long even for a whole-paragraph row, cut into rows of whole sentences by thai_cut. Each
+    row carries the one before it from the same piece as context."""
+    for row_id, text, lang, *_ in rows:
+        if len(clean(text)) > PARAGRAPH["max_chars"] and HOLE not in text:
+            previous = None
+            for n, piece in enumerate(thai_cut(clean(text), CUT_CHARS)):
+                yield f"{row_id}-c{n}", piece, lang, previous
+                previous = piece
 
 
 def whole_paragraphs(rows):
@@ -992,6 +1043,7 @@ class Source:
     modern: bool = False  # leave out sentences that read as old fiction or quote someone speaking
     spoken: bool = False  # speech and casual chat: a trailing connective is trimmed, and only a row that cannot stand as an utterance goes
     reported: bool = False  # news that quotes people: a row that stops within 20 characters of a "said that" or a "but" was cut there
+    leaning: bool = False  # chat read with its thread: a row that leans on the line before stays when that line is carried as its context
     carried: bool = False  # a turn after the first is kept only with the line before it, and not when that line asks who the customer is
     max_chars: int = 0  # a row limit of its own, for the whole-paragraph sources
     max_pieces: int = 0
@@ -1008,7 +1060,9 @@ PLAIN = Source("", "", "", "", "", "", "", None, None)
 
 
 # Whole paragraphs may be longer than a sentence row, but not so long that the English side of the pair passes the
-# trainer's 128 pieces: English takes 1.3 times the pieces of its Thai, so 80 Thai pieces is 104 on average.
+# trainer's 128 pieces: by the ratios above 80 Thai pieces come to 98 English ones at the median and 133 at the 95th
+# percentile. This limit is set by the median, since paragraphs are few and worth more: about 3 in 100 would have an
+# English side over 128 (docs/distillation-sources.md, section 3).
 PARAGRAPH = {"max_chars": 600, "max_pieces": 80}
 WIKIMEDIA = "contributors, each row's id holds the page id, https://{}/?curid=<page id>"
 SOURCES = (
@@ -1086,6 +1140,16 @@ SOURCES = (
            "https://github.com/bltlab/mot", None, voa_thai, prose=True, royal=True, reported=True),
     Source("voathai_para", "Voice of America Thai, whole paragraphs", "news", "Public domain", "https://www.voanews.com/p/5338.html",
            "As for voathai", "https://github.com/bltlab/mot", None, lambda: whole_paragraphs(voa_thai()), prose=True, royal=True, reported=True, **PARAGRAPH),
+    Source("blognone_cut", "Blognone posts, long paragraphs cut into sentences", "technology news", "CC BY 3.0 TH", "https://creativecommons.org/licenses/by/3.0/th/",
+           "As for blognone", "https://www.blognone.com", None, lambda: recut(blognone()), prose=True, pool="candidate", score="not sampled yet", repairs="long paragraphs cut into sentences by CRFCut of PyThaiNLP 5.1.2 and the builder's rules", **PARAGRAPH),
+    Source("voathai_cut", "Voice of America Thai, long paragraphs cut into sentences", "news", "Public domain", "https://www.voanews.com/p/5338.html",
+           "As for voathai", "https://github.com/bltlab/mot", None, lambda: recut(voa_thai()), prose=True, royal=True, reported=True, pool="candidate", score="not sampled yet", repairs="long paragraphs cut into sentences by CRFCut of PyThaiNLP 5.1.2 and the builder's rules", **PARAGRAPH),
+    Source("thwiki_cut", "Thai Wikipedia, long paragraphs cut into sentences", "encyclopaedic", "CC BY-SA 4.0", BY_SA,
+           "As for thwiki", "https://th.wikipedia.org", None, lambda: recut(wiki("thwiki", "th")), prose=True, royal=True, pool="candidate", use="forward_only", score="not sampled yet", repairs="long paragraphs cut into sentences by CRFCut of PyThaiNLP 5.1.2 and the builder's rules", **PARAGRAPH),
+    Source("thailaw_cut", "Thai Law Dataset v1.0, long sections and clauses cut into sentences", "legal", "Public domain (Thai Copyright Act, section 7)", CC0,
+           "As for thailaw", "https://huggingface.co/datasets/pythainlp/thailaw-v1.0", None, lambda: itertools.chain(recut(thai_law()), recut(thai_law("thailawc", CLAUSE))), prose=True, pool="candidate", score="not sampled yet", repairs="long paragraphs cut into sentences by CRFCut of PyThaiNLP 5.1.2 and the builder's rules", **PARAGRAPH),
+    Source("court_cut", "Thai Supreme Court judgments, long paragraphs cut into sentences", "legal", "Public domain (Thai Copyright Act, section 7)", CC0,
+           "As for court", "https://huggingface.co/datasets/korakot/deka-bulk", None, lambda: recut(supreme_court()), prose=True, pool="candidate", score="not sampled yet", repairs="long paragraphs cut into sentences by CRFCut of PyThaiNLP 5.1.2 and the builder's rules", **PARAGRAPH),
     Source("thailaw", "Thai Law Dataset v1.0, sections of Acts and decrees", "legal", "Public domain (Thai Copyright Act, section 7)", CC0,
            "Collected by PyThaiNLP (Wannaphong Phatthiyaphaibun), released CC0. Each row's id holds the document's number in the dataset",
            "https://huggingface.co/datasets/pythainlp/thailaw-v1.0", None, thai_law, prose=True),
@@ -1289,6 +1353,8 @@ def sift(source, batch, pieces, blocked, benchmark, seen, openers, counts):
         reason = reject(text, lang, source, row_id)
         if reason == "subject in the row before" and context:
             reason = None  # the sentence that names the subject is carried with it
+        if reason == "leans on the row before" and context and source.leaning:
+            reason = None  # so is the line a reply leans on
         if not reason and not context and source.prose and lang == "th" and THAI_NEEDS_SUBJECT.match(text):
             reason = "subject in the row before"
         if not reason and source.dialogue and not context and (len(text.split()) < 5 or LEANS.match(text)):
@@ -1451,8 +1517,11 @@ def fetch_lotusdis(target):
                     out.write(json.dumps(r | {"split": split}, ensure_ascii=False) + "\n")
 
 
-def fetch():
+def fetch(only=""):
+    """Download and check the pool's files, or only those whose path starts with only."""
     for path, url in downloads().items():
+        if not path.startswith(only):
+            continue
         target = RAW / path
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -1567,16 +1636,40 @@ def near():
     print(json.dumps({"near duplicates": dict(dropped), "usable": sum(kept.values())}), file=sys.stderr)
 
 
+# Thai is written without spaces, so its words are counted as Thai letters over the letters in a word, measured
+# for each source: the newmm segmenter of PyThaiNLP 5.1.2 over 3,000 rows of the source, taken by hash of the row id.
+THAI_WORD = {"blognone": 4.68, "blognone_para": 4.7, "commonvoice_th": 4.59, "commonvoice_th_collector": 4.52, "court": 5.01, "iapp": 4.48, "lotusdis": 3.98,
+             "oasst2_th": 4.23, "opensubtitles_th": 3.91, "opensubtitles24_th": 3.91, "tatoeba_th": 4.16, "thailaw": 5.35, "thailaw_clauses": 5.31, "thwiki": 4.66, "thwiki_para": 4.81,
+             "truevoice": 4.06, "voathai": 4.91, "voathai_para": 4.96, "wangchan": 5.18, "wisesight": 3.74, "wongnai": 3.98, "yodas": 4.13,
+             "blognone_cut": 4.7, "court_cut": 5.01, "thailaw_cut": 5.33, "thwiki_cut": 4.81, "voathai_cut": 4.96}  # the cut sources take their parent's figure
+THAI_WORD_UNMEASURED = 4.5  # for a source not yet measured
+
+
+def words(row):
+    """Words in a row: split at spaces for English, Thai letters over the source's letters to a word for Thai."""
+    return len(row["text"].split()) if row["lang"] == "en" else len(THAI.findall(row["text"])) / THAI_WORD.get(row["source"], THAI_WORD_UNMEASURED)
+
+
+def word_table(counted):
+    """Word counts of {(source, lang, tier): words} as the manifest shows them: in all, by language and tier, and by source."""
+    table = {"all": 0, "by_language_and_tier": collections.Counter(), "by_source": {}}
+    for (source, lang, tier), n in sorted(counted.items()):
+        table["all"] += round(n)
+        table["by_language_and_tier"][f"{lang} tier {tier}"] += round(n)
+        table["by_source"][source] = round(n)
+    return table | {"by_language_and_tier": dict(sorted(table["by_language_and_tier"].items()))}
+
+
 def mix(tiers=(1, 2)):
     """Take each source's share of the candidates and write sources.jsonl and manifest.json. A source whose
     licence tier is not in tiers gives nothing: `mix_tier1` builds the set from tier 1 alone."""
-    counted = json.loads((OUT / "candidates.json").read_text(encoding="utf8"))
+    read_counts = json.loads((OUT / "candidates.json").read_text(encoding="utf8"))
     ranks = {s.name: array.array("Q") for s in SOURCES}
     for r in jsonl(OUT / "candidates.jsonl"):
         ranks[r["source"]].append(rank(r["id"]))
     cut = {s.name: (1 << 64) if s.take is None or s.take >= len(ranks[s.name]) else sorted(ranks[s.name])[s.take - 1] if s.take else -1 for s in SOURCES}
     cut |= {s.name: -1 for s in SOURCES if s.tier not in tiers}
-    total, films = collections.Counter(), collections.Counter()
+    total, films, counted = collections.Counter(), collections.Counter(), collections.Counter()
     lengths = collections.defaultdict(lambda: (array.array("H"), array.array("H")))
     sha = hashlib.sha256()
     with open(OUT / "sources.jsonl", "wb") as out:
@@ -1588,6 +1681,7 @@ def mix(tiers=(1, 2)):
                 for group in (r["lang"], "all"):
                     lengths[group][0].append(len(r["text"]))
                     lengths[group][1].append(size)
+                counted[r["source"], r["lang"], r["tier"]] += words(r)
                 total.update([("source", r["source"]), ("lang", r["lang"]), ("register", r["register"]), ("licence", r["licence"]), ("use", r.get("use", "both_directions")), ("tier", str(r["tier"])), ("pool", r.get("pool", "passed"))])
                 line = (json.dumps(r, ensure_ascii=False) + "\n").encode()
                 sha.update(line)
@@ -1598,15 +1692,15 @@ def mix(tiers=(1, 2)):
 
     manifest = {
         "retrieved": RETRIEVED, "rows": sum(by("lang").values()), "sha256": sha.hexdigest(),
-        "by_language": by("lang"), "by_register": by("register"), "by_licence": by("licence"), "by_use": by("use"), "by_tier": by("tier"), "by_pool": by("pool"), "tiers_included": list(tiers),
+        "by_language": by("lang"), "by_register": by("register"), "by_licence": by("licence"), "by_use": by("use"), "by_tier": by("tier"), "by_pool": by("pool"), "tiers_included": list(tiers), "words": word_table(counted),
         "lengths": {group: {"characters_mean": round(sum(chars) / len(chars), 1), "characters_p95": percentile(chars, 0.95),
                             "pieces_mean": round(sum(sizes) / len(sizes), 1), "pieces_p95": percentile(sizes, 0.95)}
                     for group, (chars, sizes) in sorted(lengths.items())},
         "sources": {s.name: {"title": s.title, "repairs": s.repairs, "use": s.use or "both_directions", "tier": s.tier, "pool": s.pool or "passed", "last_score": s.score,
                              "licence_finding": s.finding or s.licence, "licence_read_on": s.read_on or s.licence_url, "register": s.register, "licence": s.licence, "licence_url": s.licence_url,
-                             "credit": s.credit, "homepage": s.homepage, **counted["sources"][s.name],
+                             "credit": s.credit, "homepage": s.homepage, **read_counts["sources"][s.name],
                              "target": s.take, "in_mix": total["source", s.name]} for s in SOURCES},
-        "files": counted["files"],
+        "files": read_counts["files"],
     }
     if (OUT / "films_read.json").exists():  # per film and per subtitle file: what was read and what is in the mix, for the reduction
         read = json.loads((OUT / "films_read.json").read_text(encoding="utf8"))
@@ -1626,7 +1720,7 @@ def mix(tiers=(1, 2)):
 # ---------------------------------------------------------------- the reduction: from the pool to the set to translate
 
 # Thai sources of the candidate pool that go into the reduced set all the same. opensubtitles_th is a little under
-# the bar (81 good rows in 100): it is in because it is the only large conversational Thai, by the owner's choice.
+# the bar (77 good rows in 100 on the strict 300-row check): it is in because it is the only large conversational Thai, by the owner's choice.
 ADMITTED = frozenset({"opensubtitles_th", "wisesight"})
 FILM_DROPPED = 0.7  # a film that lost this share of its subtitle lines to the filters is left out whole
 FILM_MIXED = 0.01  # so is one where this share of lines mixes rude and polite pronouns, a sign of machine translation
@@ -1734,12 +1828,13 @@ def reduce(tiers=(1, 2)):
     for n, r in enumerate(jsonl(OUT / "sources.jsonl")):
         if verdicts[n] == 2 and n not in chosen:
             removed["look-alike duplicate"][r["source"]] += 1
-    total, sha = collections.Counter(), hashlib.sha256()
+    total, counted, sha = collections.Counter(), collections.Counter(), hashlib.sha256()
     lengths = collections.defaultdict(lambda: (array.array("H"), array.array("H")))
     encode = __import__("train.tokenizer", fromlist=["Tokenizer"]).Tokenizer().encode
     with open(OUT / "distill_set.jsonl", "wb") as out:
         for batch in itertools.batched(without_near_duplicates(survivors, removed["near duplicate"]), 20000):
             for r, pieces in zip(batch, encode([r["text"] for r in batch])):
+                counted[r["source"], r["lang"], r["tier"]] += words(r)
                 total.update([("source", r["source"]), ("lang", r["lang"]), ("tier", str(r["tier"])), ("register", r["register"])])
                 for group in (r["lang"], "all"):
                     lengths[group][0].append(len(r["text"]))
@@ -1754,7 +1849,7 @@ def reduce(tiers=(1, 2)):
     largest = sorted(((size, group_text[mark]) for mark, size in group_size.items() if size > 1), reverse=True)
     record = {
         "pool": {"rows": pool["rows"], "sha256": pool["sha256"]}, "rows": sum(by("lang").values()), "sha256": sha.hexdigest(), "tiers_included": list(tiers),
-        "by_language": by("lang"), "by_tier": by("tier"), "by_register": by("register"),
+        "by_language": by("lang"), "by_tier": by("tier"), "by_register": by("register"), "words": word_table(counted),
         "lengths": {group: {"characters_mean": round(sum(chars) / len(chars), 1), "pieces_mean": round(sum(sizes) / len(sizes), 1), "pieces_p95": percentile(sizes, 0.95)}
                     for group, (chars, sizes) in sorted(lengths.items())},
         "sources": {s.name: {"pool": pool["sources"][s.name]["in_mix"], "kept": total["source", s.name]} for s in SOURCES if pool["sources"][s.name]["in_mix"]},
@@ -2021,8 +2116,118 @@ PINS = {
     "enwikinews/enwikinews-20261101-pages-articles1.xml-p3000001p3095843.bz2": "a4fc912a65f6ef035e437b7d080e1e421a9fe88f945a1d852b775bbb6d69b83d",
 }
 
+# The selected set: rows chosen by the scores of local keep-or-drop filters, kept beside the rows as files of
+# id<TAB>p under data/distill/scores. Nothing is removed from the pool or the crawl collections; a row is chosen.
+SELECT_FIRST = 0.9  # a Thai row's score from the first filter
+SELECT_STRICT, SELECT_STRICT_OF = 0.821, {"thwiki_p": 0.871, "pantip_th": 0.2, "krathu_th": 0.2}  # and from the strict filter; one collection needs more, and forum rows, read with the line before them, less
+SELECT_BUILD = {name: (SELECT_FIRST, SELECT_STRICT_OF.get(name, SELECT_STRICT), "prose", "prose.strict")  # collection of the build: the two cut-offs, and where the scores of a row scored later are (scores/build_new/)
+                for name in "prd_th thwiki_p thwikisource_p court_p thailaw_p blognone_p voathai_p pantip_th krathu_th thaifin_th fineweb2_th".split()}
+SELECT_BUILD |= {"forum2_th": (None, None, None, None)}  # forum pages have no first scores: every row is judged as SELECT_FORUM says
+SELECT_BUILD |= {"gutenberg_en": (0.812, None, "en2", None), "stackexchange_en": (0.97, None, "en", None), "opensubtitles_en": (0.812, None, "en2", None),
+                 "opensubtitles24_th": (0.95, None, "subs", None)}  # and its subtitle file must be marked keep in scores/build_new/subs_files.tsv
+SELECT_FORUM, SELECT_FORUM_ROWS = 0.807, ("forum2_th", "pantip_th", "krathu_th")  # a row of these with no score in its slice's file is in on its score in scores/build_new/forum.tsv alone
+SELECT_LEFT_OUT = "near_dups.keys"  # optional, in scores/build_new/: a content key a line, or a pool row's id, of rows to leave out
+SELECT_SUBTITLES = 0.95  # Thai subtitle rows of the pool (scores/opensubtitles_th.tsv)
+SELECT_POOL_EN = 0.812  # English rows of the pool (scores/en2/pool_en.tsv)
+SELECT_NOT = ("-ell-", "-english-")  # Stack Exchange sites about English itself are left out
+SELECTED = Path(__file__).with_name("selected_build.json")  # the selected set as recorded: what select_verify compares with
+
+
+def scored(paths, cut):
+    """Hashes of the ids scored cut or more in files of id<TAB>p."""
+    keep = set()
+    for path in paths:
+        with open(path, encoding="utf8") as lines:
+            for line in lines:
+                row_id, _, p = line.rstrip("\n").rpartition("\t")
+                if float(p) >= cut:
+                    keep.add(digest(row_id))
+    return keep
+
+
+def key_scores(path):
+    """{content key: score} of a file of key<TAB>score, or nothing where the file is not there."""
+    if not path or not path.exists():
+        return {}
+    with open(path, encoding="utf8") as lines:
+        return {int(key, 16): float(p) for key, p in (line.split("\t")[:2] for line in lines)}
+
+
+def select(tiers=(1, 2)):
+    """Write the selected set, selected.jsonl.gz, and its counts, selected.json. Every row keeps its source and
+    tier, so `select_tier1` is the same set without tier 2. The crawl-side rows are those of the build
+    (data/distill/build, `python -m train.crawl build all` and `merge`), looked up by content key: a row is in
+    when the merge left it (build/duplicates.tsv), it is not in the optional list of rows to leave out, and its
+    scores meet the cut-offs above. A slice's scores are in scores/build/<collection>/<slice>.tsv (key, first
+    score, strict score); a score missing there is taken from scores/build_new/. A forum row with no score in
+    its slice's file is judged by the forum scores alone, and a row of the later subtitles also needs its
+    subtitle file marked keep. The pool's Thai subtitles and English rows come from sources.jsonl, by id.
+    The rows are written in a fixed order, and selected.json holds a sha256 of every id and text in that order."""
+    scores, build = OUT / "scores", OUT / "build"
+    gone = set()
+    with open(build / "duplicates.tsv", encoding="utf8") as lines:
+        for line in lines:
+            gone.add(int(line.rstrip("\n").rsplit("\t", 1)[1], 16))
+    left_out = set((scores / "build_new" / SELECT_LEFT_OUT).read_text(encoding="utf8").split()) if (scores / "build_new" / SELECT_LEFT_OUT).exists() else set()
+    forum = key_scores(scores / "build_new" / "forum.tsv")
+    files = scores / "build_new" / "subs_files.tsv"
+    files = {line.split("\t")[0] for line in files.read_text(encoding="utf8").splitlines() if line.endswith("\tkeep")} if files.exists() else set()
+    counted, rows_kept, checksum = collections.Counter(), collections.Counter(), hashlib.sha256()
+    with gzip.open(OUT / "selected.jsonl.gz", "wt", encoding="utf8", compresslevel=4) as out:
+        def take(r, label):
+            counted[label, r["lang"], r["tier"]] += words(r)
+            rows_kept[label] += 1
+            checksum.update(f"{r['id']}\t{r['text']}\n".encode())
+            out.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+        for name, (first_cut, strict_cut, new_first, new_strict) in SELECT_BUILD.items():
+            later = key_scores(new_first and scores / "build_new" / f"{new_first}.tsv"), key_scores(new_strict and scores / "build_new" / f"{new_strict}.tsv")
+            passes = lambda first, strict: first_cut is not None and first is not None and first >= first_cut and (strict_cut is None or (strict is not None and strict >= strict_cut))
+            for file in sorted((build / name).glob("*.jsonl.gz")):
+                keep, carried, table = set(), set(), scores / "build" / name / f"{file.name[:-9]}.tsv"
+                if table.exists() and first_cut is not None:
+                    with open(table, encoding="utf8") as lines:
+                        for key, first, strict in ((line.rstrip("\n").split("\t") + [""])[:3] for line in lines):
+                            key = int(key, 16)
+                            if name in SELECT_FORUM_ROWS:
+                                carried.add(key)
+                            if passes(float(first) if first else later[0].get(key), float(strict) if strict else later[1].get(key)):
+                                keep.add(key)
+                with gzip.open(file, "rt", encoding="utf8") as lines:
+                    for r in map(json.loads, lines):
+                        key = int(r["key"], 16)
+                        if r["tier"] not in tiers or key in gone or r["key"] in left_out:
+                            continue
+                        if name in SELECT_FORUM_ROWS:
+                            good = key in keep or (key not in carried and forum.get(key, 0) >= SELECT_FORUM)
+                        else:
+                            good = key in keep or passes(later[0].get(key), later[1].get(key))
+                        if name == "opensubtitles24_th":  # the id is the collection, the film and file, and the line's number
+                            good = good and r["id"].split("-", 1)[1].rsplit("-", 1)[0] in files
+                        if good and not (name == "stackexchange_en" and any(site in r["id"] for site in SELECT_NOT)):
+                            take(r, f"{name}{' long' if r.get('long') and r['lang'] == 'th' else ''}")
+        for label, table, cut, mine in (("opensubtitles_th", scores / "opensubtitles_th.tsv", SELECT_SUBTITLES, lambda r: r["source"] == "opensubtitles_th"),
+                                        ("pool_en", scores / "en2" / "pool_en.tsv", SELECT_POOL_EN, lambda r: r["lang"] == "en")):
+            keep = scored([table], cut)
+            for r in jsonl(OUT / "sources.jsonl"):
+                if mine(r) and r["tier"] in tiers and digest(r["id"]) in keep and r["id"] not in left_out:
+                    take(r, label)
+    done = {"tiers": list(tiers), "rows": sum(rows_kept.values()), "sha256": checksum.hexdigest(), "rows_by_source": dict(rows_kept), "words": word_table(counted)}
+    (OUT / "selected.json").write_text(json.dumps(done, ensure_ascii=False, indent=1) + "\n", encoding="utf8")
+    print(json.dumps(done["words"], ensure_ascii=False, indent=1), file=sys.stderr)
+
+
+def select_verify():
+    """Compare the selected set written here with the one recorded: its rows, its words and the hash of its ids and text."""
+    found, recorded = (json.loads(path.read_text(encoding="utf8")) for path in (OUT / "selected.json", SELECTED))
+    if found != recorded:
+        raise SystemExit(json.dumps({k: {"here": found.get(k), "recorded": recorded.get(k)} for k in ("tiers", "rows", "sha256") if found.get(k) != recorded.get(k)} or "the counts by source differ"))
+    print(f"selected set as recorded: {found['rows']} rows, sha256 {found['sha256']}")
+
+
 if __name__ == "__main__":
     command = sys.argv[1:] or ["candidates", "near", "mix"]  # mix alone re-balances without reading the downloads again
     for step in command:
         {"fetch": fetch, "candidates": candidates, "near": near, "mix": mix, "mix_tier1": lambda: mix((1,)),
-         "reduce": reduce, "reduce_tier1": lambda: reduce((1,))}[step]()
+         "reduce": reduce, "reduce_tier1": lambda: reduce((1,)), "select": select, "select_tier1": lambda: select((1,)), "select_verify": select_verify,
+         "select_record": lambda: shutil.copyfile(OUT / "selected.json", SELECTED)}[step]()

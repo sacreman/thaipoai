@@ -136,21 +136,55 @@ class Translator(nn.Module):
             y, _ = layer(y, memory, mask, memory_mask)
         return self.embedding.as_linear(self.decoder_norm(y))
 
-    def next_token(self, last, position, memory, memory_mask, caches):
+    def next_logits(self, last, position, memory, memory_mask, caches):
         """One decoding step: only the newest token is processed, so a sentence costs linear time."""
         y = self.embed(last, position)
         updated = []
         for layer, cache in zip(self.decoder, caches or [None] * len(self.decoder)):
             y, cache = layer(y, memory, None, memory_mask, cache)
             updated.append(cache)
-        return self.embedding.as_linear(self.decoder_norm(y))[:, -1].argmax(-1).astype(mx.int32), updated
+        return self.embedding.as_linear(self.decoder_norm(y))[:, -1], updated
+
+    def next_token(self, last, position, memory, memory_mask, caches):
+        logits, caches = self.next_logits(last, position, memory, memory_mask, caches)
+        return logits.argmax(-1).astype(mx.int32), caches
+
+    def beam_search(self, memory, mask, beam, steps):
+        """The best of beam hypotheses per source, by log-probability per token.
+        ponytail: a finished hypothesis competes unnormalised until the end; add a length penalty in the search if short outputs win."""
+        batch, flat = memory.shape[0], memory.shape[0] * beam
+        memory, mask = mx.repeat(memory, beam, axis=0), mx.repeat(mask, beam, axis=0)
+        scores = mx.array([[0.0] + [-1e9] * (beam - 1)] * batch)  # every beam starts as the same hypothesis, so only one counts
+        token, caches = mx.full((flat,), BOS, mx.int32), None
+        finished, lengths, history = mx.zeros((batch, beam), mx.bool_), mx.zeros((batch, beam)), mx.zeros((flat, 0), mx.int32)
+        offsets = (mx.arange(batch) * beam)[:, None]
+        for position in range(steps):
+            logits, caches = self.next_logits(token[:, None], position, memory, mask, caches)
+            log_probabilities = nn.log_softmax(logits, axis=-1).reshape(batch, beam, -1)
+            vocab = log_probabilities.shape[-1]
+            pad_only = mx.where(mx.arange(vocab) == PAD, 0.0, -1e9)  # a finished hypothesis keeps its score and only pads
+            candidates = (scores[:, :, None] + mx.where(finished[:, :, None], pad_only, log_probabilities)).reshape(batch, -1)
+            chosen = mx.argpartition(-candidates, beam - 1, axis=-1)[:, :beam]
+            scores, parent, token = mx.take_along_axis(candidates, chosen, axis=-1), chosen // vocab, (chosen % vocab).astype(mx.int32)
+            rows = (parent + offsets).reshape(-1)
+            was_finished = mx.take_along_axis(finished, parent, axis=-1)
+            lengths = mx.take_along_axis(lengths, parent, axis=-1) + (1 - was_finished)
+            finished = was_finished | (token == EOS)
+            token = token.reshape(-1)
+            history = mx.concatenate([history[rows], token[:, None]], axis=1)
+            caches = [((keys[rows], values[rows]), cross) for (keys, values), cross in caches]  # cross-attention is the same for every beam of a source
+            mx.eval(scores, token, finished, lengths, history, caches)
+            if finished.all().item():
+                break
+        best = (scores / mx.maximum(lengths, 1)).argmax(-1) + offsets[:, 0]
+        return history[best].tolist()
 
     def __call__(self, source, target):
         memory, memory_mask = self.encode(source)
         return self.decode(target, memory, memory_mask)
 
-    def translate(self, sources, limit=None, batch_size=64):
-        """Greedy translation of encoded sources, in batches sorted by length."""
+    def translate(self, sources, limit=None, batch_size=64, beam=1):
+        """Translation of encoded sources, in batches sorted by length. Greedy, or a beam search when beam is above 1."""
         self.eval()
         results = [None] * len(sources)
         order = sorted(range(len(sources)), key=lambda i: len(sources[i]))
@@ -161,7 +195,8 @@ class Translator(nn.Module):
             memory, mask = self.encode(source)
             mx.eval(memory)
             token, caches, finished, steps = mx.full((len(group),), BOS, mx.int32), None, mx.zeros((len(group),), mx.bool_), []
-            for position in range(min(limit or longest * 2 + 16, self.config.max_length) - 1):
+            most = min(limit or longest * 2 + 16, self.config.max_length) - 1
+            for position in range(most if beam == 1 else 0):
                 token, caches = self.next_token(token[:, None], position, memory, mask, caches)
                 token = mx.where(finished, mx.array(PAD, mx.int32), token)
                 finished = finished | (token == EOS)
@@ -169,7 +204,7 @@ class Translator(nn.Module):
                 steps.append(token)
                 if finished.all().item():
                     break
-            output = mx.stack(steps, axis=1).tolist()
+            output = mx.stack(steps, axis=1).tolist() if beam == 1 else self.beam_search(memory, mask, beam, most)
             for index, ids in zip(group, output):
                 results[index] = [i for i in (ids[: ids.index(EOS)] if EOS in ids else ids) if i not in (PAD, BOS)]
         self.train()
