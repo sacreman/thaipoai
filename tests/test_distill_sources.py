@@ -816,6 +816,13 @@ def test_select_takes_the_rows_the_score_files_choose_and_keeps_their_tier(tmp_p
     assert [json.loads(line)["id"] for line in gzip.open(tmp_path / "selected.jsonl.gz", "rt", encoding="utf8")] == ["a", "e", "g", "f1", "se-cooking-1-p0", "opensubtitles24_th-10_2-77-1", "s1", "e1"]  # f, a forum row with no carried score, is not in the forum scores
     (tmp_path / "recorded.json").write_text((tmp_path / "selected.json").read_text())
     d.select_verify()
+    d.select_split(tmp_path / "tier1")  # the tier 1 rows as files, and the whole set again from them and a tier 2 selection
+    assert sorted(f.name for f in (tmp_path / "tier1").glob("*.gz")) == ["tier1-pool_en.jsonl.gz", "tier1-stackexchange_en.jsonl.gz"]
+    d.select((2,))
+    d.select_join(tmp_path / "tier1")
+    (tmp_path / "tier1/tier1-pool_en.jsonl.gz").unlink()
+    with pytest.raises(SystemExit):
+        d.select_join(tmp_path / "tier1")
     d.select((1,))
     assert [(r["id"], r["tier"]) for r in map(json.loads, gzip.open(tmp_path / "selected.jsonl.gz", "rt", encoding="utf8"))] == [("se-cooking-1-p0", 1), ("e1", 1)]
     assert json.loads((tmp_path / "selected.json").read_text())["words"]["by_language_and_tier"] == {"en tier 1": 8}

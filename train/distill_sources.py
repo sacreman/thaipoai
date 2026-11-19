@@ -20,6 +20,7 @@ import csv
 import difflib
 import gzip
 import hashlib
+import heapq
 import io
 import itertools
 import json
@@ -2225,9 +2226,60 @@ def select_verify():
     print(f"selected set as recorded: {found['rows']} rows, sha256 {found['sha256']}")
 
 
+TIER1 = Path("runs/release/sources")  # the tier 1 rows of the selected set as files, one a collection: what select_split writes and select_join reads
+
+
+def select_rank(row):
+    """Where a row's collection comes in the selected set: the build's collections in their order, then the pool's Thai subtitles, then its English."""
+    return list(SELECT_BUILD).index(row["source"]) if "key" in row else len(SELECT_BUILD) + (row["lang"] == "en")
+
+
+def selected_rows(path):
+    with gzip.open(path, "rt", encoding="utf8") as lines:
+        yield from map(json.loads, lines)
+
+
+def select_split(out=TIER1):
+    """Write the tier 1 rows of selected.jsonl.gz as tier1-<collection>.jsonl.gz, in the selected order, with their
+    counts in tier1.json. The same rows give the same bytes."""
+    out.mkdir(parents=True, exist_ok=True)
+    files, counts = {}, collections.defaultdict(collections.Counter)
+    for r in selected_rows(OUT / "selected.jsonl.gz"):
+        if r["tier"] == 1:
+            name = r["source"] if "key" in r else "pool_en"
+            if name not in files:
+                raw = open(out / f"tier1-{name}.jsonl.gz", "wb")
+                files[name] = raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0)
+            files[name][1].write((json.dumps(r, ensure_ascii=False) + "\n").encode())
+            counts[name, r["source"], r["lang"], r.get("licence")].update(rows=1, words=words(r))
+    for raw, zipped in files.values():
+        zipped.close()
+        raw.close()
+    table = [{"file": f"tier1-{name}.jsonl.gz", "source": source, "lang": lang, "licence": licence, "rows": n["rows"], "words": round(n["words"])} for (name, source, lang, licence), n in counts.items()]
+    (out / "tier1.json").write_text(json.dumps(table, ensure_ascii=False, indent=1) + "\n", encoding="utf8")
+    print(json.dumps({"files": len(files), "rows": sum(t["rows"] for t in table), "words": sum(t["words"] for t in table)}))
+
+
+def select_join(tier1=TIER1):
+    """The selected set from the tier 1 files and the tier 2 rows of selected.jsonl.gz (`select_tier2` after a
+    build), put back in the selected order: its rows and the hash of its ids and text, against the record."""
+    files = sorted(tier1.glob("tier1-*.jsonl.gz"), key=lambda f: select_rank(next(selected_rows(f))))
+    first = itertools.chain.from_iterable(map(selected_rows, files))
+    second = (r for r in selected_rows(OUT / "selected.jsonl.gz") if r["tier"] == 2)
+    rows, checksum = 0, hashlib.sha256()
+    for r in heapq.merge(first, second, key=select_rank):  # no collection holds both tiers, so neither stream waits on a tie
+        rows += 1
+        checksum.update(f"{r['id']}\t{r['text']}\n".encode())
+    recorded = json.loads(SELECTED.read_text(encoding="utf8"))
+    if (rows, checksum.hexdigest()) != (recorded["rows"], recorded["sha256"]):
+        raise SystemExit(json.dumps({"here": [rows, checksum.hexdigest()], "recorded": [recorded["rows"], recorded["sha256"]]}))
+    print(f"joined set as recorded: {rows} rows, sha256 {checksum.hexdigest()}")
+
+
 if __name__ == "__main__":
     command = sys.argv[1:] or ["candidates", "near", "mix"]  # mix alone re-balances without reading the downloads again
     for step in command:
         {"fetch": fetch, "candidates": candidates, "near": near, "mix": mix, "mix_tier1": lambda: mix((1,)),
-         "reduce": reduce, "reduce_tier1": lambda: reduce((1,)), "select": select, "select_tier1": lambda: select((1,)), "select_verify": select_verify,
+         "reduce": reduce, "reduce_tier1": lambda: reduce((1,)), "select": select, "select_tier1": lambda: select((1,)), "select_tier2": lambda: select((2,)), "select_verify": select_verify,
+         "select_split": select_split, "select_join": select_join,
          "select_record": lambda: shutil.copyfile(OUT / "selected.json", SELECTED)}[step]()

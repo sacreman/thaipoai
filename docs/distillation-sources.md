@@ -437,6 +437,18 @@ lets `select` write the recorded set again; this was checked from a separate ext
 themselves are not in it: they come from the build (`data/distill/build`, with `duplicates.tsv` from the
 merge) and from the pool (`sources.jsonl`).
 
+### Releasing the selected set
+
+`select_split` writes the tier 1 rows of the selected set to `runs/release/sources`, one file a collection
+(`tier1-<collection>.jsonl.gz`, the pool's English rows together as `tier1-pool_en.jsonl.gz`), in the selected
+order and with fixed bytes, with their counts in `tier1.json`. Every row keeps its `licence` and `source`
+fields; the notice released with the files gives each source's licence and credit. The rows of the tier 2
+sources are not redistributed; they are rebuilt from the original source. `select_tier2` selects them alone
+after a build, and `select_join` puts the tier 1 files and those rows back in the selected order and compares
+the rows and their sha256 with `train/selected_build.json`. No collection holds both tiers, which is what
+lets the two be joined by collection. The split and the join were run once on the recorded set and gave its
+sha256.
+
 ### The reduced set
 
 The pool is not what gets translated. A last stage, `reduce`, reads `sources.jsonl` and writes
@@ -637,6 +649,8 @@ python -m train.distill_sources reduce_tier1  # the same without tier 2
 python -m train.distill_sources select        # the rows the score files choose, to selected.jsonl.gz
 python -m train.distill_sources select_tier1  # the same without tier 2
 python -m train.distill_sources select select_verify  # and compare with train/selected_build.json
+python -m train.distill_sources select_split   # the tier 1 rows of the selected set, to runs/release/sources
+python -m train.distill_sources select_tier2 select_join  # tier 2 alone, joined with those files and compared with the record
 python -m train.crawl jobs                    # the jobs of the build
 python -m train.crawl build <job>             # fetch, check and read one job into data/distill/build
 python -m train.crawl build all               # every job in turn
