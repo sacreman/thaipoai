@@ -94,6 +94,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/workflows/project-text.sh
       - run: python -m train.crawl build "$JOB"
+      - name: Check this job's slices against the record
+        run: python -m train.crawl verify
       - name: Encrypt the rows for the last job
         env:
           ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
