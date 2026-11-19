@@ -69,8 +69,13 @@ EXPLICIT = re.compile(
 
 def replace_details(text):
     text = text.translate(THAI_DIGITS)
-    for placeholder, pattern in RULES:
-        text = pattern.sub(lambda match: (match.group(1) or "") + placeholder, text)
+    # Until nothing changes: a detail touching another ("@nok@lek") only shows once its neighbour is replaced.
+    for _ in range(20):
+        before = text
+        for placeholder, pattern in RULES:
+            text = pattern.sub(lambda match: (match.group(1) or "") + placeholder, text)
+        if text == before:
+            break
     return text
 
 
@@ -112,7 +117,8 @@ def scrub(rows, names=None, explicit=EXPLICIT, source="src", target="dst"):
                 continue
             sides = [replace_details(row[field]) for field in (source, target)]
             if pattern:
-                sides = [pattern.sub("<name>", side) for side in sides]
+                # A name taken out can uncover a detail it was touching ("john@nok99"), so the details run again.
+                sides = [replace_details(pattern.sub("<name>", side)) for side in sides]
             found = [collections.Counter(PLACEHOLDER.findall(side)) for side in sides]
             if found[0] != found[1]:
                 counts["dropped_mismatch"] += 1
@@ -126,6 +132,11 @@ def scrub(rows, names=None, explicit=EXPLICIT, source="src", target="dst"):
     return kept, dict(counts)
 
 
+def read(path):
+    """JSON lines. Split at the line feed only: splitlines() also breaks at U+2028 and its kin, which chat text holds."""
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf8").split("\n") if line.strip()]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--in", dest="source", required=True)
@@ -134,7 +145,6 @@ def main():
     parser.add_argument("--explicit", help="a file of extra terms, one per line, that mark a message as explicit")
     parser.add_argument("--fields", default="src,dst")
     args = parser.parse_args()
-    read = lambda path: [json.loads(line) for line in Path(path).read_text(encoding="utf8").splitlines() if line.strip()]
     # ponytail: the whole file is held in memory, fine to a few million short rows. Stream by thread beyond that.
     names = {entry["thread"]: entry["names"] for entry in read(args.names)} if args.names else None
     explicit = EXPLICIT

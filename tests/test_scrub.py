@@ -1,5 +1,7 @@
 """The scrub: details become placeholders on both sides, and unsafe or lopsided pairs are dropped."""
-from train.scrub import replace_details, scrub
+import json
+
+from train.scrub import read, replace_details, scrub
 
 
 def pair(src, dst, thread="t"):
@@ -12,6 +14,7 @@ def test_each_kind_of_detail_gets_its_placeholder():
         "see https://example.com/a?b=1 and www.x.org": "see <url> and <url>",
         "my site is nokbar.com/menu": "my site is <url>",
         "add @nok_99 please": "add <handle> please",
+        "@nok_99@lek_88@som_77 hi": "<handle><handle><handle> hi",
         "line id: nok99": "line id: <id>",
         "ไลน์ nok99 นะ": "ไลน์ <id> นะ",
         "call 081-234-5678 or +66 81 234 5678": "call <phone> or <phone>",
@@ -65,3 +68,15 @@ def test_nothing_is_left_for_a_second_pass_and_other_fields_survive():
     kept, counts = scrub([pair("mail a@b.com, call 0812345678", "เมล a@b.com โทร 0812345678")])
     assert counts["residual"] == 0 and counts["written"] == 1 and counts["<email>"] == 1 and counts["<phone>"] == 1
     assert kept[0]["dir"] == "x" and kept[0]["thread"] == "t"
+
+
+def test_a_detail_uncovered_by_removing_a_name_is_replaced_too():
+    kept, counts = scrub([pair("my name is John", "ผมชื่อ John"), pair("John@nok99 ok", "John@nok99 โอเค")])
+    assert [r["src"] for r in kept] == ["my name is <name>", "<name><handle> ok"] and counts["residual"] == 0
+
+
+def test_a_line_separator_inside_a_message_does_not_split_its_row(tmp_path):
+    rows = [pair("one two\x85three", "หนึ่ง"), pair("ok", "โอเค")]
+    path = tmp_path / "rows.jsonl"
+    path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf8")
+    assert read(path) == rows
