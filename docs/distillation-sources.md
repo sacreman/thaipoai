@@ -702,28 +702,30 @@ rebuild it from an empty checkout once the publishers have moved on.
 
 ## 9. The GitHub Actions workflow
 
-`.github/workflows/corpus-build.yml` is a draft and has not been run. It has a job for the pool, a matrix of
-one job for each entry of `python -m train.crawl jobs`, and a last job that merges, verifies and, given a
-release that holds the score files, selects and checks the selected set against its record. Open items:
+`.github/workflows/corpus-build.yml` has a job for the pool, a matrix of one job for each entry of
+`python -m train.crawl jobs`, and a last job that merges, verifies and, given a release that holds the score
+files, selects and checks the selected set against its record. It publishes nothing: rows pass between the
+jobs as artifacts encrypted with the `ARTIFACT_KEY` repository secret, and what it leaves readable is counts
+and hashes. Open items:
 
 1. **Mirror the inputs that are not kept upstream**: the ten files above, and the Thai Wikisource dump of the
    build (`thwikisource-20261101-pages-articles.xml.bz2`). Until then a run fails at their checksum once the
    publisher has moved on.
 2. **The older public pairs.** `data/public/train.jsonl` and `data/public/validation.jsonl` are read for the
-   exclusion steps and are not built by any script in the repository. The workflow takes them from a release
-   named `build-inputs-v1`, which does not exist yet.
+   exclusion steps and are not built by any script in the repository. The workflow takes them from the
+   `build-inputs-v1` release (`public-pairs.tgz`), which is the only copy besides the files on disk.
 3. **Publishers that may change a file in place.** Project Gutenberg corrects books without a new address,
    and the Stack Exchange archives are replaced at each new dump. A changed file stops the job at its
    checksum; a mirror would be the only way to rebuild the same rows afterwards.
 4. **The score files are an input.** So is the list of near-duplicates to leave out, which is kept with
    them. They come from filters trained and run apart, and are packaged by
    `python -m train.release selection`; the workflow does not make them again. It checks `selection.tgz`
-   against the sha256 above, which is written in the workflow file, and no release holds the archive yet.
+   against the sha256 above, which is written in the workflow file; the archive is in `build-inputs-v1`.
 5. **Confirm on Linux.** The build has only run on macOS (Apple silicon), and the times above are from that
    machine. The hosted runner's cores are slower.
 6. **Disk in the last job.** The merged build is 11 GB, `sources.jsonl` 3.5 GB, the extracted score files
    5.3 GB and the selected rows 4.1 GB, about 24 GB together and more than a hosted runner's 14 GB. The
-   job needs a larger runner, or the selection has to read the slices one artifact at a time.
+   job first removes toolchains it does not use from the runner, and decrypts one archive at a time.
 
 ### Determinism
 

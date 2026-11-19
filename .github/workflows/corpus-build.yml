@@ -1,12 +1,14 @@
 name: corpus-build
 # Rebuilds the source-text rows from their pinned downloads, one job a download, then merges them and checks the
 # result against the record in train/crawl_build.json. See docs/distillation-sources.md, "The build".
+# Rows pass between jobs as encrypted artifacts (the ARTIFACT_KEY secret); only counts and hashes are left readable.
 on:
   workflow_dispatch:
     inputs:
       scores:
         description: Release tag that holds selection.tgz (the score files). Empty builds and checks the rows only.
         required: false
+        default: build-inputs-v1
 permissions: {}
 concurrency: corpus-build
 env:
@@ -51,14 +53,20 @@ jobs:
       - run: python -m train.distill_sources candidates near
       - run: rm data/distill/filtered.jsonl # 4 GB that mix does not read; the runner's disk is about 14 GB
       - run: python -m train.distill_sources mix
-      - run: gzip -k data/distill/sources.jsonl
+      - run: gzip data/distill/sources.jsonl
+      - name: Encrypt the rows for the last job
+        env:
+          ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
+        run: |
+          [ -n "$ARTIFACT_KEY" ] || { echo "no ARTIFACT_KEY secret"; exit 1; }
+          tar -cf - data/distill/sources.jsonl.gz data/distill/manifest.json | gpg --batch --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 --compress-algo none -o "pool.tar.gpg" 3<<<"$ARTIFACT_KEY"
+          df -BM --output=used,avail / | tail -1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pool
-          path: |
-            data/distill/sources.jsonl.gz
-            data/distill/manifest.json
-          retention-days: 7
+          path: pool.tar.gpg
+          compression-level: 0
+          retention-days: 3
 
   build:
     needs: list
@@ -86,11 +94,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/workflows/project-text.sh
       - run: python -m train.crawl build "$JOB"
+      - name: Encrypt the rows for the last job
+        env:
+          ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
+        run: |
+          [ -n "$ARTIFACT_KEY" ] || { echo "no ARTIFACT_KEY secret"; exit 1; }
+          tar -cf - data/distill/build | gpg --batch --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 --compress-algo none -o "build-$JOB.tar.gpg" 3<<<"$ARTIFACT_KEY"
+          df -BM --output=used,avail / | tail -1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-${{ matrix.job }}
-          path: data/distill/build
-          retention-days: 7
+          path: build-${{ matrix.job }}.tar.gpg
+          compression-level: 0
+          retention-days: 3
 
   merge:
     needs: [pool, build]
@@ -108,18 +124,27 @@ jobs:
         with:
           python-version: "3.12.13" # the filters use this version's Unicode tables
       - run: pip install $PACKAGES
+      - name: Make room, the rows and the score files together need about 30 GB
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -BM --output=used,avail / | tail -1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: build-*
-          path: data/distill/build
+          path: sealed
           merge-multiple: true
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: pool
-          path: data/distill
-      - run: gunzip data/distill/sources.jsonl.gz
+      - name: Decrypt the rows, one archive at a time
+        env:
+          ARTIFACT_KEY: ${{ secrets.ARTIFACT_KEY }}
+        run: |
+          for sealed in sealed/*.tar.gpg; do
+            gpg --batch --pinentry-mode loopback --passphrase-fd 3 --decrypt "$sealed" 3<<<"$ARTIFACT_KEY" | tar -xf -
+            rm "$sealed"
+          done
+          gunzip data/distill/sources.jsonl.gz
+          df -BM --output=used,avail / | tail -1
       - run: python -m train.crawl merge
       - run: python -m train.crawl verify
+      - run: df -BM --output=used,avail / | tail -1
       - name: Select by the score files, and check the selected set against its record
         if: inputs.scores != ''
         env:
@@ -129,7 +154,9 @@ jobs:
           gh release download "$SCORES" --pattern 'selection.tgz'
           echo "$SELECTION_SHA256  selection.tgz" | sha256sum --check
           tar -xzf selection.tgz
+          rm selection.tgz
           python -m train.distill_sources select select_verify
+          df -BM --output=used,avail / | tail -1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: counts
