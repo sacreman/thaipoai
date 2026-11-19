@@ -708,9 +708,10 @@ files, selects and checks the selected set against its record. It publishes noth
 jobs as artifacts encrypted with the `ARTIFACT_KEY` repository secret, and what it leaves readable is counts
 and hashes. Open items:
 
-1. **Mirror the inputs that are not kept upstream**: the ten files above, and the Thai Wikisource dump of the
-   build (`thwikisource-20261101-pages-articles.xml.bz2`). Until then a run fails at their checksum once the
-   publisher has moved on.
+1. **The inputs that are not kept upstream.** The ten files above are mirrored as `pool-inputs.tgz` in the
+   `build-inputs-v1` release, and the workflow's pool job takes them from there. The Thai Wikisource dump of
+   the build (`thwikisource-20261101-pages-articles.xml.bz2`) is not mirrored yet: that job fails at its
+   checksum once the publisher deletes the dump.
 2. **The older public pairs.** `data/public/train.jsonl` and `data/public/validation.jsonl` are read for the
    exclusion steps and are not built by any script in the repository. The workflow takes them from the
    `build-inputs-v1` release (`public-pairs.tgz`), which is the only copy besides the files on disk.
