@@ -101,6 +101,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: .github/workflows/project-text.sh
+      - name: The downloads their publishers do not keep, from the build-inputs release
+        if: matrix.job == 'paragraphs' # this job reads the pool's downloads too
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download build-inputs-v1 --pattern 'pool-inputs.tgz'
+          echo "e44caf683bff06e5adbe17a2a7bc01fcca11e7525a2a686db82c69d3e9319bda  pool-inputs.tgz" | sha256sum --check
+          tar -xzf pool-inputs.tgz && rm pool-inputs.tgz
       - run: python -m train.crawl build "$JOB"
       - name: Check this job's slices against the record
         run: python -m train.crawl verify
