@@ -125,6 +125,7 @@ PARAGRAPHS = {"thwiki_p": ("thwiki", lambda: d.wiki("thwiki", "th")), "voathai_p
               "court_p": ("court", d.supreme_court), "thailaw_p": ("thailaw", lambda: itertools.chain(d.thai_law(), d.thai_law("thailawc", d.CLAUSE)))}
 COLLECTIONS |= {name: dataclasses.replace(next(s for s in d.SOURCES if s.name == base), name=name, pool="candidate", score="not sampled yet", **d.PARAGRAPH)
                 for name, (base, _) in PARAGRAPHS.items()}
+COLLECTIONS["thwikisource_p"] = dataclasses.replace(COLLECTIONS["thwikisource_p"], title="Thai Wikisource", credit="Wikisource " + d.WIKIMEDIA.format("th.wikisource.org"), homepage="https://th.wikisource.org")
 COLLECTIONS["opensubtitles_en"] = dataclasses.replace(next(s for s in d.SOURCES if s.name == "opensubtitles_th"), name="opensubtitles_en",
                                                       title="OpenSubtitles v2018, English", pool="candidate", score="not sampled yet")
 COLLECTIONS["opensubtitles24_th"] = dataclasses.replace(next(s for s in d.SOURCES if s.name == "opensubtitles_th"), name="opensubtitles24_th", title="OpenSubtitles Thai (OPUS OpenSubtitles v2024)",
